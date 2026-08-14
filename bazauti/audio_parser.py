@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from bazauti.exceptions import InvalidFileHeaderError
+from bazauti.fmt_compression_codes import parse_compression_code
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,18 @@ class WAVMetadataSubChunk:
 class WAVMetadata:
     sample_rate: float = 0.0
     file_size: int = 0
+    description: str = ""
+    originator: str = ""
+    originator_reference: str = ""
+    originator_date: str = ""
+    originator_time: str = ""
+    version: int = 0
+    coding_history: str = ""
+    compression_code: str = ""
+    number_of_channels: int = 0
+    bytes_per_second: int = 0
+    block_align: int = 0
+    bits_per_sample: int = 0
     sub_chunks: list[WAVMetadataSubChunk] = field(default_factory=list)
 
 SUB_CHUNK_ID_BYTE_SIZE = 4
@@ -61,6 +74,14 @@ class WAVParser:
                 properties = {}
                 if sub_chunk_id == "bext":
                     properties = self._parse_bext_metadata(data)
+                elif sub_chunk_id == "fmt ":
+                    properties = self._parse_fmt_metadata(data)
+                elif sub_chunk_id == "data":
+                    properties = self._parse_data_metadata(data)
+                elif sub_chunk_id == "LIST":
+                    self._parse_list_metadata(data)
+                elif sub_chunk_id == "fact":
+                    properties = self._parse_fact_metadata(data)
 
                 start_idx += sub_chunk_size + SUB_CHUNK_SIZE_BYTE_SIZE
                 self._metadata.sub_chunks.append(WAVMetadataSubChunk(name=sub_chunk_id, size=sub_chunk_size,
@@ -87,8 +108,65 @@ class WAVParser:
         properties["maximum true peak"] = int.from_bytes(data[416:418],"little", signed=True)
         properties["maximum momentary loudness"] = int.from_bytes(data[418:420],"little", signed=True)
         properties["maximum short term loudness"] = int.from_bytes(data[420:422],"little", signed=True)
-        properties["reserved"] = data[422:602].hex()
+        if properties["version"] != 1 and properties["version"] != 2:
+            properties["reserved"] = data[422:602].hex()
         properties["coding history"] = data[602: len(data)].strip(b'\x00').decode()
+
+        self._metadata.description = properties["description"]
+        self._metadata.originator = properties["originator"]
+        self._metadata.originator_reference = properties["originator reference"]
+        self._metadata.originator_date = properties["originator date"]
+        self._metadata.originator_time = properties["originator time"]
+        self._metadata.version = properties["version"]
+        self._metadata.coding_history = properties["coding history"]
+
+        return properties
+
+    def _parse_fmt_metadata(self, data:bytes) -> dict[str, Any]:
+        properties = {}
+        compression_code = parse_compression_code(int.from_bytes(data[0:2], "little"))
+        properties["compression code"] = str(compression_code)
+        properties["number of channels"] = int.from_bytes(data[2:4], "little")
+        properties["sample rate"] = int.from_bytes(data[4:8], "little")
+        properties["Bytes per second"] = int.from_bytes(data[8:12], "little")
+        properties["Block align"] = int.from_bytes(data[12:14], "little")
+        properties["bits per sample"] = int.from_bytes(data[14:16], "little")
+        no_of_extra_format_bytes = int.from_bytes(data[16:18], "little")
+        properties["extra format bytes"] = data[18:18+no_of_extra_format_bytes]
+
+        self._metadata.compression_code = properties["compression code"]
+        self._metadata.number_of_channels = properties["number of channels"]
+        self._metadata.sample_rate = properties["sample rate"]
+        self._metadata.bytes_per_second = properties["Bytes per second"]
+        self._metadata.block_align = properties["Block align"]
+        self._metadata.bits_per_sample = properties["bits per sample"]
+
+        return properties
+
+    def _parse_data_metadata(self, data: bytes) -> dict[str, Any]:
+        properties = {}
+        return properties
+
+    def _parse_list_metadata(self, data: bytes) -> dict[str, Any]:
+        properties = {}
+        list_type_id = data[0:4].strip(b'\x00').decode()
+        print(list_type_id)
+        start_idx = 4
+        while start_idx < (len(data) - 1):
+            sub_chunk_id = data[start_idx: start_idx+4].decode()
+            print(f"\tID: {sub_chunk_id}")
+            start_idx += 4
+            sub_chunk_size = int.from_bytes(data[start_idx: start_idx+4], "little")
+            start_idx += 4
+            sub_chunk_data = data[start_idx: start_idx+sub_chunk_size].strip(b'\x00').decode()
+            start_idx += sub_chunk_size
+            print(f"\tData: {sub_chunk_data}")
+        return properties
+
+    def _parse_fact_metadata(self, data: bytes) -> dict[str, Any]:
+        properties = {}
+        sample_count = int.from_bytes(data, "little")
+        properties["sample_count"] = sample_count
         return properties
 
 
