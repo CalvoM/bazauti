@@ -4,6 +4,7 @@ from typing import Any
 
 from bazauti.exceptions import InvalidFileHeaderError
 from bazauti.fmt_compression_codes import parse_compression_code
+from bazauti.list_info_ids import parse_list_info_id
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class WAVParser:
                 elif sub_chunk_id == "data":
                     properties = self._parse_data_metadata(data)
                 elif sub_chunk_id == "LIST":
-                    self._parse_list_metadata(data)
+                    properties = self._parse_list_metadata(data)
                 elif sub_chunk_id == "fact":
                     properties = self._parse_fact_metadata(data)
 
@@ -150,17 +151,15 @@ class WAVParser:
     def _parse_list_metadata(self, data: bytes) -> dict[str, Any]:
         properties = {}
         list_type_id = data[0:4].strip(b'\x00').decode()
-        print(list_type_id)
         start_idx = 4
         while start_idx < (len(data) - 1):
             sub_chunk_id = data[start_idx: start_idx+4].decode()
-            print(f"\tID: {sub_chunk_id}")
             start_idx += 4
             sub_chunk_size = int.from_bytes(data[start_idx: start_idx+4], "little")
             start_idx += 4
             sub_chunk_data = data[start_idx: start_idx+sub_chunk_size].strip(b'\x00').decode()
             start_idx += sub_chunk_size
-            print(f"\tData: {sub_chunk_data}")
+            properties[str(parse_list_info_id(sub_chunk_id))] = sub_chunk_data
         return properties
 
     def _parse_fact_metadata(self, data: bytes) -> dict[str, Any]:
