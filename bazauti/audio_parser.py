@@ -39,6 +39,7 @@ class WAVParser:
     def __init__(self, input_file:str):
         self.input_file: str = input_file
         self._metadata = WAVMetadata()
+        self._raw_data: bytes = b""
         self._parse_metadata()
 
     @property
@@ -83,6 +84,8 @@ class WAVParser:
                     properties = self._parse_list_metadata(data)
                 elif sub_chunk_id == "fact":
                     properties = self._parse_fact_metadata(data)
+                elif sub_chunk_id == "cue ":
+                    pass
 
                 start_idx += sub_chunk_size + SUB_CHUNK_SIZE_BYTE_SIZE
                 self._metadata.sub_chunks.append(WAVMetadataSubChunk(name=sub_chunk_id, size=sub_chunk_size,
@@ -145,13 +148,24 @@ class WAVParser:
         return properties
 
     def _parse_data_metadata(self, data: bytes) -> dict[str, Any]:
-        properties = {}
+        self._raw_data = data
+        properties = {"raw_data": data}
         return properties
 
     def _parse_list_metadata(self, data: bytes) -> dict[str, Any]:
         properties = {}
         list_type_id = data[0:4].strip(b'\x00').decode()
-        start_idx = 4
+        if list_type_id == "INFO":
+            properties = self._parse_list_info_metadata(data[4:])
+        elif list_type_id == "adtl":
+            properties = self._parse_list_adtl_metadata(data[4:])
+        elif list_type_id == "wavl":
+            properties = self._parse_list_wavl_metadata(data[4:])
+        return properties
+
+    def _parse_list_info_metadata(self, data: bytes) -> dict[str, Any]:
+        properties = {}
+        start_idx = 0
         while start_idx < (len(data) - 1):
             sub_chunk_id = data[start_idx: start_idx+4].decode()
             start_idx += 4
@@ -161,6 +175,13 @@ class WAVParser:
             start_idx += sub_chunk_size
             properties[str(parse_list_info_id(sub_chunk_id))] = sub_chunk_data
         return properties
+    def _parse_list_adtl_metadata(self, data: bytes) -> dict[str, Any]:
+        properties = {}
+        return properties
+
+    def _parse_list_wavl_metadata(self, data: bytes) -> dict[str, Any]:
+        properties = {}
+        return properties
 
     def _parse_fact_metadata(self, data: bytes) -> dict[str, Any]:
         properties = {}
@@ -168,5 +189,6 @@ class WAVParser:
         properties["sample_count"] = sample_count
         return properties
 
-
-
+    def _parse_cue_metadata(self, data: bytes) -> dict[str, Any]:
+        properties = {}
+        return properties
