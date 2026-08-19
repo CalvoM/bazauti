@@ -1,4 +1,7 @@
-use std::{any::Any, collections::HashMap, fs};
+use crate::audio_parser::utils::{
+    convert_to_number, fixed_string, parse_compression_code, CompressionCode,
+};
+use std::{any::Any, collections::HashMap, convert, fs};
 
 use crate::audio_parser::errors::AudioParserError::{self, InvalidFileHeaderError};
 
@@ -6,26 +9,60 @@ use crate::audio_parser::errors::AudioParserError::{self, InvalidFileHeaderError
 pub struct WAVMetadataSubChunk {
     pub name: String,
     pub size: u32,
-    pub properties: HashMap<String, Box<dyn Any>>,
 }
 
-#[derive(Debug, Default)]
-pub struct WAVMetadata {
-    pub sample_rate: u32,
-    pub file_size: u32,
+#[derive(Debug, Clone)]
+pub struct BextMetadata {
     pub description: String,
     pub originator: String,
     pub originator_reference: String,
     pub originator_date: String,
     pub originator_time: String,
+    pub time_reference: u64,
     pub version: u16,
+    pub umid: [u8; 64],
+    pub loudness_value: i16,
+    pub loudness_range: i16,
+    pub max_true_peak_level: i16,
+    pub max_momentary_loudness: i16,
+    pub max_short_term_loudness: i16,
+    pub reserved: [u8; 180],
     pub coding_history: String,
-    pub compression_code: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FmtMetadata {
+    pub compression_code: CompressionCode,
     pub number_of_channels: u16,
-    pub bytes_per_second: u16,
+    pub sample_rate_per_second: u32,
+    pub avg_bytes_per_second: u32,
     pub block_align: u16,
-    pub bits_per_sample: u32,
-    pub sub_chunks: Vec<WAVMetadataSubChunk>,
+    pub bits_per_sample: u16,
+    pub extra_bytes_size: Option<u16>,
+    pub extra_bytes: Option<Vec<u8>>,
+    pub samples_per_block: Option<u16>,
+    pub coefficient_count: Option<u16>,
+    pub coefficients: Option<Vec<u8>>, //TODO: We need more info.
+}
+
+#[derive(Debug, Default)]
+pub struct WAVMetadata {
+    //pub sample_rate: u32,
+    pub file_size: u32,
+    //pub description: String,
+    //pub originator: String,
+    //pub originator_reference: String,
+    //pub originator_date: String,
+    //pub originator_time: String,
+    //pub version: u16,
+    //pub coding_history: String,
+    //pub compression_code: String,
+    //pub number_of_channels: u16,
+    //pub bytes_per_second: u16,
+    //pub block_align: u16,
+    //pub bits_per_sample: u32,
+    pub bext_metadata: Option<BextMetadata>,
+    pub fmt_metadata: Option<FmtMetadata>,
 }
 pub struct WAVParser {
     input_file: String,
@@ -83,175 +120,96 @@ impl WAVParser {
                     .try_into()
                     .unwrap();
             let data: &[u8] = &file_data[start_idx + 4..start_idx + sub_chunk_size + 4];
-            let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
             if sub_chunk_id == String::from("bext") {
-                properties = self.parse_bext_metadata(data);
+                let metadata = self.parse_bext_metadata(data).unwrap();
+                self.raw_metadata.bext_metadata = Some(metadata);
             } else if sub_chunk_id == String::from("fmt ") {
-                properties = self.parse_fmt_metadata(data);
+                let metadata = self.parse_fmt_metadata(data).unwrap();
+                self.raw_metadata.fmt_metadata = Some(metadata);
             } else if sub_chunk_id == String::from("data") {
-                properties = self.parse_data_metadata(data);
+                let data = self.parse_data_metadata(data);
+                self.raw_data = data.unwrap();
             } else if sub_chunk_id == String::from("LIST") {
-                properties = self.parse_list_metadata(data);
+                self.parse_list_metadata(data);
             } else if sub_chunk_id == String::from("fact") {
-                properties = self.parse_fact_metadata(data);
+                self.parse_fact_metadata(data);
             } else if sub_chunk_id == String::from("cue ") {
-                properties = self.parse_cue_metadata(data);
+                self.parse_cue_metadata(data);
             }
             start_idx += sub_chunk_size + 4;
-            self.raw_metadata.sub_chunks.push(WAVMetadataSubChunk {
-                name: sub_chunk_id,
-                size: sub_chunk_size.try_into().unwrap(),
-                properties,
-            });
         }
         Ok(())
     }
-    fn parse_bext_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
-        properties.insert(
-            String::from("description"),
-            Box::new(
-                String::from_utf8_lossy(&data[0..256].split(|&x| x == 0).next().unwrap_or(&[]))
-                    .into_owned(),
-            ),
-        );
-        properties.insert(
-            String::from("originator"),
-            Box::new(
-                String::from_utf8_lossy(&data[256..288].split(|&x| x == 0).next().unwrap_or(&[]))
-                    .into_owned(),
-            ),
-        );
-        properties.insert(
-            String::from("originator reference"),
-            Box::new(
-                String::from_utf8_lossy(&data[288..320].split(|&x| x == 0).next().unwrap_or(&[]))
-                    .into_owned(),
-            ),
-        );
-        properties.insert(
-            String::from("originator date"),
-            Box::new(
-                String::from_utf8_lossy(&data[320..330].split(|&x| x == 0).next().unwrap_or(&[]))
-                    .into_owned(),
-            ),
-        );
-        properties.insert(
-            String::from("originator time"),
-            Box::new(
-                String::from_utf8_lossy(&data[330..338].split(|&x| x == 0).next().unwrap_or(&[]))
-                    .into_owned(),
-            ),
-        );
-        properties.insert(
-            String::from("time reference"),
-            Box::new(u64::from_le_bytes(data[338..346].try_into().unwrap())),
-        );
-        let version = u16::from_le_bytes(data[346..348].try_into().unwrap());
-        properties.insert(String::from("version"), Box::new(version));
-        properties.insert(
-            String::from("umid"),
-            Box::new(
-                data[348..412]
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>(),
-            ),
-        );
-        properties.insert(
-            String::from("loudness"),
-            Box::new(u16::from_le_bytes(data[412..414].try_into().unwrap())),
-        );
-        properties.insert(
-            String::from("loudness range"),
-            Box::new(u16::from_le_bytes(data[414..416].try_into().unwrap())),
-        );
-        properties.insert(
-            String::from("maximum true peak"),
-            Box::new(u16::from_le_bytes(data[416..418].try_into().unwrap())),
-        );
-        properties.insert(
-            String::from("maximum momentary loudness"),
-            Box::new(u16::from_le_bytes(data[418..420].try_into().unwrap())),
-        );
-        properties.insert(
-            String::from("maximum short term loudness"),
-            Box::new(u16::from_le_bytes(data[420..422].try_into().unwrap())),
-        );
-        if version != 1 && version != 2 {
-            properties.insert(
-                String::from("reserved"),
-                Box::new(
-                    data[422..602]
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<String>(),
-                ),
-            );
+    fn parse_bext_metadata(&mut self, data: &[u8]) -> Result<BextMetadata, AudioParserError> {
+        let metadata = BextMetadata {
+            description: fixed_string(&data[0..256]),
+            originator: fixed_string(&data[256..288]),
+            originator_reference: fixed_string(&data[288..320]),
+            originator_date: fixed_string(&data[320..330]),
+            originator_time: fixed_string(&data[330..338]),
+            time_reference: convert_to_number(data, 338, 346).unwrap(),
+            version: convert_to_number(data, 346, 348).unwrap(),
+            umid: data[348..412].try_into().expect("slice length checked"),
+            loudness_value: convert_to_number(data, 412, 414).unwrap(),
+            loudness_range: convert_to_number(data, 414, 416).unwrap(),
+            max_true_peak_level: convert_to_number(data, 416, 418).unwrap(),
+            max_momentary_loudness: convert_to_number(data, 418, 420).unwrap(),
+            max_short_term_loudness: convert_to_number(data, 420, 422).unwrap(),
+            reserved: data[422..602].try_into().expect("slice length checked"),
+            coding_history: fixed_string(&data[602..]),
+        };
+        Ok(metadata)
+    }
+    fn parse_fmt_metadata(&mut self, data: &[u8]) -> Result<FmtMetadata, AudioParserError> {
+        let compression_code = parse_compression_code(convert_to_number(data, 0, 2).unwrap());
+
+        let mut extra_bytes_size: Option<u16> = None;
+        let mut extra_bytes: Option<Vec<u8>> = None;
+        let mut samples_per_block: Option<u16> = None;
+        let mut coefficient_count: Option<u16> = None;
+        let mut coefficients: Option<Vec<u8>> = None;
+
+        if compression_code == CompressionCode::Pcm {
+            extra_bytes_size = None;
+            extra_bytes = None;
+            samples_per_block = None;
+            coefficient_count = None;
+            coefficients = None;
+        } else if compression_code == CompressionCode::Adpcm {
+            extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
+            samples_per_block = Some(convert_to_number(data, 18, 20).unwrap());
+            coefficient_count = Some(convert_to_number(data, 20, 22).unwrap());
+            if coefficient_count.unwrap() > 0 {
+                let limit = 8 * coefficient_count.unwrap() as usize;
+                coefficients = Some(data[24..limit].to_vec());
+            }
+        } else if compression_code == CompressionCode::ImaAdpcm {
+            extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
+            samples_per_block = Some(convert_to_number(data, 18, 20).unwrap());
+        } else {
+            extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
+            if extra_bytes_size.unwrap() > 0 {
+                let limit = extra_bytes_size.unwrap() as usize;
+                extra_bytes = Some(data[18..limit].to_vec());
+            }
         }
-        let coding_history = String::from_utf8_lossy(
-            &data[602..data.len()]
-                .split(|&x| x == 0)
-                .next()
-                .unwrap_or(&[]),
-        );
-        properties.insert(
-            String::from("coding history"),
-            Box::new(coding_history.into_owned()),
-        );
-        self.raw_metadata.description = properties
-            .get("description")
-            .unwrap()
-            .downcast_ref::<String>()
-            .unwrap()
-            .clone();
-        self.raw_metadata.originator = properties
-            .get("originator")
-            .unwrap()
-            .downcast_ref::<String>()
-            .unwrap()
-            .clone();
-        self.raw_metadata.originator_reference = properties
-            .get("originator reference")
-            .unwrap()
-            .downcast_ref::<String>()
-            .unwrap()
-            .clone();
-        self.raw_metadata.originator_date = properties
-            .get("originator date")
-            .unwrap()
-            .downcast_ref::<String>()
-            .unwrap()
-            .clone();
-        self.raw_metadata.originator_time = properties
-            .get("originator time")
-            .unwrap()
-            .downcast_ref::<String>()
-            .unwrap()
-            .clone();
-        self.raw_metadata.version = properties
-            .get("version")
-            .unwrap()
-            .downcast_ref::<u16>()
-            .unwrap()
-            .clone();
-        self.raw_metadata.coding_history = properties
-            .get("coding history")
-            .unwrap()
-            .downcast_ref::<String>()
-            .unwrap()
-            .clone();
-        properties
+        let metadata = FmtMetadata {
+            compression_code,
+            number_of_channels: convert_to_number(data, 2, 4).unwrap(),
+            sample_rate_per_second: convert_to_number(data, 4, 8).unwrap(),
+            avg_bytes_per_second: convert_to_number(data, 8, 12).unwrap(),
+            block_align: convert_to_number(data, 12, 14).unwrap(),
+            bits_per_sample: convert_to_number(data, 14, 16).unwrap(),
+            extra_bytes_size,
+            extra_bytes,
+            samples_per_block,
+            coefficient_count,
+            coefficients,
+        };
+        Ok(metadata)
     }
-    fn parse_fmt_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
-        properties
-    }
-    fn parse_data_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
-        self.raw_data = data.to_vec();
-        properties.insert(String::from("raw_data"), Box::new(data.to_vec()));
-        properties
+    fn parse_data_metadata(&mut self, data: &[u8]) -> Result<Vec<u8>, AudioParserError> {
+        Ok(data.to_vec())
     }
     fn parse_list_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
         let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();

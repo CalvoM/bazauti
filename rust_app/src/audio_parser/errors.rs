@@ -5,4 +5,6 @@ pub enum AudioParserError {
     InputAudioFileError(String),
     #[error("{0}")]
     InvalidFileHeaderError(String),
+    #[error("invalid byte count: expected {expected}, got {actual}")]
+    InvalidByteCount { expected: usize, actual: usize },
 }
