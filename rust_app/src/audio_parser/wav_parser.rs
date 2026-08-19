@@ -147,10 +147,8 @@ impl WAVParser {
             String::from("time reference"),
             Box::new(u64::from_le_bytes(data[338..346].try_into().unwrap())),
         );
-        properties.insert(
-            String::from("version"),
-            Box::new(u16::from_le_bytes(data[346..348].try_into().unwrap())),
-        );
+        let version = u16::from_le_bytes(data[346..348].try_into().unwrap());
+        properties.insert(String::from("version"), Box::new(version));
         properties.insert(
             String::from("umid"),
             Box::new(
@@ -159,6 +157,47 @@ impl WAVParser {
                     .map(|b| format!("{:02x}", b))
                     .collect::<String>(),
             ),
+        );
+        properties.insert(
+            String::from("loudness"),
+            Box::new(u16::from_le_bytes(data[412..414].try_into().unwrap())),
+        );
+        properties.insert(
+            String::from("loudness range"),
+            Box::new(u16::from_le_bytes(data[414..416].try_into().unwrap())),
+        );
+        properties.insert(
+            String::from("maximum true peak"),
+            Box::new(u16::from_le_bytes(data[416..418].try_into().unwrap())),
+        );
+        properties.insert(
+            String::from("maximum momentary loudness"),
+            Box::new(u16::from_le_bytes(data[418..420].try_into().unwrap())),
+        );
+        properties.insert(
+            String::from("maximum short term loudness"),
+            Box::new(u16::from_le_bytes(data[420..422].try_into().unwrap())),
+        );
+        if version != 1 && version != 2 {
+            properties.insert(
+                String::from("reserved"),
+                Box::new(
+                    data[422..602]
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>(),
+                ),
+            );
+        }
+        let coding_history = String::from_utf8_lossy(
+            &data[602..data.len()]
+                .split(|&x| x == 0)
+                .next()
+                .unwrap_or(&[]),
+        );
+        properties.insert(
+            String::from("coding history"),
+            Box::new(coding_history.into_owned()),
         );
         self.raw_metadata.description = properties
             .get("description")
@@ -194,6 +233,12 @@ impl WAVParser {
             .get("version")
             .unwrap()
             .downcast_ref::<u16>()
+            .unwrap()
+            .clone();
+        self.raw_metadata.coding_history = properties
+            .get("coding history")
+            .unwrap()
+            .downcast_ref::<String>()
             .unwrap()
             .clone();
         properties
