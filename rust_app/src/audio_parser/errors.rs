@@ -1,5 +1,5 @@
 use thiserror::Error;
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum AudioParserError {
     #[error("{0}")]
     InputAudioFileError(String),

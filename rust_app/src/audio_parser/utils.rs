@@ -134,3 +134,94 @@ pub fn parse_compression_code(code: u16) -> CompressionCode {
         _ => CompressionCode::Unknown,
     }
 }
+
+#[repr(u16)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListInfoId {
+    #[default]
+    Unknown = 0,
+    Iarl = 1,
+    Iart = 2,
+    Icms = 3,
+    Icmt = 4,
+    Icop = 5,
+    Icrd = 6,
+    Icrp = 7,
+    Idim = 8,
+    Idpi = 9,
+    Ieng = 10,
+    Ignr = 11,
+    Ikey = 12,
+    Ilgt = 13,
+    Imed = 14,
+    Inam = 15,
+    Iplt = 16,
+    Iprd = 17,
+    Isbj = 18,
+    Isft = 19,
+    Ishp = 20,
+    Isrc = 21,
+    Isrf = 22,
+    Itch = 23,
+}
+
+impl std::fmt::Display for ListInfoId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Unknown => "Unknown",
+            Self::Iarl => "Archival Location",
+            Self::Iart => "Artist",
+            Self::Icms => "Commissioned",
+            Self::Icmt => "Comments",
+            Self::Icop => "Copyright",
+            Self::Icrd => "Creation date",
+            Self::Icrp => "Cropped",
+            Self::Idim => "Dimensions",
+            Self::Idpi => "Dots Per Inch",
+            Self::Ieng => "Engineer",
+            Self::Ignr => "Genre",
+            Self::Ikey => "Keywords",
+            Self::Ilgt => "Lightness",
+            Self::Imed => "Medium",
+            Self::Inam => "Name",
+            Self::Iplt => "Palette Setting",
+            Self::Iprd => "Product",
+            Self::Isbj => "Subject",
+            Self::Isft => "Software",
+            Self::Ishp => "Sharpness",
+            Self::Isrc => "Source",
+            Self::Isrf => "Source Form",
+            Self::Itch => "Technician",
+        };
+        write!(f, "{}", value)
+    }
+}
+
+pub fn parse_list_info_id(info_id: &str) -> ListInfoId {
+    match info_id {
+        "IARL" => ListInfoId::Iarl,
+        "IART" => ListInfoId::Iart,
+        "ICMS" => ListInfoId::Icms,
+        "ICMT" => ListInfoId::Icmt,
+        "ICOP" => ListInfoId::Icop,
+        "ICRD" => ListInfoId::Icrd,
+        "ICRP" => ListInfoId::Icrp,
+        "IDIM" => ListInfoId::Idim,
+        "IDPI" => ListInfoId::Idpi,
+        "IENG" => ListInfoId::Ieng,
+        "IGNR" => ListInfoId::Ignr,
+        "IKEY" => ListInfoId::Ikey,
+        "ILGT" => ListInfoId::Ilgt,
+        "IMED" => ListInfoId::Imed,
+        "INAM" => ListInfoId::Inam,
+        "IPLT" => ListInfoId::Iplt,
+        "IPRD" => ListInfoId::Iprd,
+        "ISBJ" => ListInfoId::Isbj,
+        "ISFT" => ListInfoId::Isft,
+        "ISHP" => ListInfoId::Ishp,
+        "ISRC" => ListInfoId::Isrc,
+        "ISRF" => ListInfoId::Isrf,
+        "ITCH" => ListInfoId::Itch,
+        _ => ListInfoId::Unknown,
+    }
+}

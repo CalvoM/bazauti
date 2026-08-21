@@ -1,11 +1,11 @@
 use crate::audio_parser::utils::{
-    convert_to_number, fixed_string, parse_compression_code, CompressionCode,
+    convert_to_number, fixed_string, parse_compression_code, parse_list_info_id, CompressionCode,
 };
-use std::{any::Any, collections::HashMap, convert, fs};
+use std::{any::Any, collections::HashMap, fs};
 
 use crate::audio_parser::errors::AudioParserError::{self, InvalidFileHeaderError};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WAVMetadataSubChunk {
     pub name: String,
     pub size: u32,
@@ -45,7 +45,7 @@ pub struct FmtMetadata {
     pub coefficients: Option<Vec<u8>>, //TODO: We need more info.
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct WAVMetadata {
     //pub sample_rate: u32,
     pub file_size: u32,
@@ -64,6 +64,7 @@ pub struct WAVMetadata {
     pub bext_metadata: Option<BextMetadata>,
     pub fmt_metadata: Option<FmtMetadata>,
 }
+#[derive(Clone, Debug)]
 pub struct WAVParser {
     input_file: String,
     raw_metadata: WAVMetadata,
@@ -81,6 +82,10 @@ impl WAVParser {
 
     pub fn metadata(self) -> WAVMetadata {
         self.raw_metadata
+    }
+
+    pub fn data(self) -> Vec<u8> {
+        self.raw_data
     }
 
     pub fn parse(&mut self) -> Result<(), AudioParserError> {
@@ -162,6 +167,11 @@ impl WAVParser {
     }
     fn parse_fmt_metadata(&mut self, data: &[u8]) -> Result<FmtMetadata, AudioParserError> {
         let compression_code = parse_compression_code(convert_to_number(data, 0, 2).unwrap());
+        let number_of_channels = convert_to_number::<u16>(data, 2, 4).unwrap();
+        let sample_rate_per_second = convert_to_number::<u32>(data, 4, 8).unwrap();
+        let avg_bytes_per_second = convert_to_number::<u32>(data, 8, 12).unwrap();
+        let block_align = convert_to_number::<u16>(data, 12, 14).unwrap();
+        let bits_per_sample = convert_to_number::<u16>(data, 14, 16).unwrap();
 
         let mut extra_bytes_size: Option<u16> = None;
         let mut extra_bytes: Option<Vec<u8>> = None;
@@ -170,23 +180,51 @@ impl WAVParser {
         let mut coefficients: Option<Vec<u8>> = None;
 
         if compression_code == CompressionCode::Pcm {
+            let calculated_block_align = number_of_channels * bits_per_sample / 8;
+            if calculated_block_align != block_align {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the block align: Got: {}, expected: {}",
+                    calculated_block_align, block_align
+                )));
+            }
             extra_bytes_size = None;
             extra_bytes = None;
             samples_per_block = None;
             coefficient_count = None;
             coefficients = None;
         } else if compression_code == CompressionCode::Adpcm {
+            let calculated_rate = sample_rate_per_second * number_of_channels as u32;
+            let calculated_block_align = if calculated_rate < 22000 {
+                256
+            } else if calculated_rate > 22000 && calculated_rate < 44000 {
+                512
+            } else {
+                1024
+            };
+            if calculated_block_align != block_align {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the block align: Got: {}, expected: {}",
+                    calculated_block_align, block_align
+                )));
+            }
             extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
             samples_per_block = Some(convert_to_number(data, 18, 20).unwrap());
             coefficient_count = Some(convert_to_number(data, 20, 22).unwrap());
             if coefficient_count.unwrap() > 0 {
-                let limit = 8 * coefficient_count.unwrap() as usize;
-                coefficients = Some(data[24..limit].to_vec());
+                let limit = 4 * coefficient_count.unwrap() as usize;
+                coefficients = Some(data[22..22 + limit].to_vec());
             }
         } else if compression_code == CompressionCode::ImaAdpcm {
             extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
             samples_per_block = Some(convert_to_number(data, 18, 20).unwrap());
         } else {
+            let calculated_block_align = number_of_channels * bits_per_sample / 8;
+            if calculated_block_align != block_align {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the block align: Got: {}, expected: {}",
+                    calculated_block_align, block_align
+                )));
+            }
             extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
             if extra_bytes_size.unwrap() > 0 {
                 let limit = extra_bytes_size.unwrap() as usize;
@@ -195,11 +233,11 @@ impl WAVParser {
         }
         let metadata = FmtMetadata {
             compression_code,
-            number_of_channels: convert_to_number(data, 2, 4).unwrap(),
-            sample_rate_per_second: convert_to_number(data, 4, 8).unwrap(),
-            avg_bytes_per_second: convert_to_number(data, 8, 12).unwrap(),
-            block_align: convert_to_number(data, 12, 14).unwrap(),
-            bits_per_sample: convert_to_number(data, 14, 16).unwrap(),
+            number_of_channels,
+            sample_rate_per_second,
+            avg_bytes_per_second,
+            block_align,
+            bits_per_sample,
             extra_bytes_size,
             extra_bytes,
             samples_per_block,
@@ -211,20 +249,40 @@ impl WAVParser {
     fn parse_data_metadata(&mut self, data: &[u8]) -> Result<Vec<u8>, AudioParserError> {
         Ok(data.to_vec())
     }
-    fn parse_list_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
+    fn parse_list_metadata(&mut self, data: &[u8]) -> HashMap<String, String> {
+        let mut properties: HashMap<String, String> = HashMap::new();
+        let list_type_id = fixed_string(&data[0..4]);
+        if list_type_id == String::from("INFO") {
+            properties = self.parse_list_info_metadata(&data[4..]);
+        } else if list_type_id == String::from("adtl") {
+            properties = self.parse_list_adtl_metadata(&data[4..]);
+        } else if list_type_id == String::from("wavl") {
+            properties = self.parse_list_wavl_metadata(&data[4..]);
+        }
         properties
     }
-    fn parse_list_info_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
+    fn parse_list_info_metadata(&mut self, data: &[u8]) -> HashMap<String, String> {
+        let mut properties: HashMap<String, String> = HashMap::new();
+        let mut idx = 0;
+        while idx < (data.len() - 1) {
+            let sub_chunk_id = fixed_string(&data[idx..idx + 4]);
+            idx += 4;
+            let sub_chunk_size = convert_to_number::<u32>(data, idx, idx + 4);
+            idx += 4;
+            let sub_chunk_data =
+                fixed_string(&data[idx..(idx + *sub_chunk_size.as_ref().unwrap() as usize)]);
+            idx += sub_chunk_size.unwrap() as usize;
+            let info_id = parse_list_info_id(&sub_chunk_id);
+            properties.insert(format!("{info_id}"), sub_chunk_data);
+        }
         properties
     }
-    fn parse_list_adtl_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
+    fn parse_list_adtl_metadata(&mut self, _data: &[u8]) -> HashMap<String, String> {
+        let properties: HashMap<String, String> = HashMap::new();
         properties
     }
-    fn parse_list_wavl_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
+    fn parse_list_wavl_metadata(&mut self, _data: &[u8]) -> HashMap<String, String> {
+        let properties: HashMap<String, String> = HashMap::new();
         properties
     }
     fn parse_fact_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
@@ -233,8 +291,8 @@ impl WAVParser {
         properties.insert(String::from("sample_count"), Box::new(sample_count));
         properties
     }
-    fn parse_cue_metadata(&mut self, data: &[u8]) -> HashMap<String, Box<dyn Any>> {
-        let mut properties: HashMap<String, Box<dyn Any>> = HashMap::new();
+    fn parse_cue_metadata(&mut self, _data: &[u8]) -> HashMap<String, Box<dyn Any>> {
+        let properties: HashMap<String, Box<dyn Any>> = HashMap::new();
         properties
     }
 }
