@@ -221,14 +221,8 @@ impl WAVParser {
                     bits_per_sample, ADPCM_BITS_PER_SAMPLE
                 )));
             }
-            let calculated_rate = sample_rate_per_second * number_of_channels as u32;
-            let calculated_block_align = if calculated_rate < 22000 {
-                256
-            } else if calculated_rate > 22000 && calculated_rate < 44000 {
-                512
-            } else {
-                1024
-            };
+            let calculated_block_align =
+                Self::calculate_adpcm_block_align(sample_rate_per_second, number_of_channels);
             if calculated_block_align != block_align {
                 return Err(InvalidFileHeaderError(format!(
                     "Mismatch of the block align: Got: {}, expected: {}",
@@ -243,9 +237,11 @@ impl WAVParser {
                 )));
             }
             samples_per_block = Some(convert_to_number(data, 18, 20).unwrap());
-            let calculated_samples_per_block = (((block_align - (7 * number_of_channels)) * 8)
-                / (bits_per_sample * number_of_channels))
-                + 2;
+            let calculated_samples_per_block = Self::calculate_adpcm_samples_per_block(
+                block_align,
+                number_of_channels,
+                bits_per_sample,
+            );
             if samples_per_block.unwrap_or(0) != calculated_samples_per_block {
                 return Err(InvalidFileHeaderError(format!(
                     "Mismatch of the samples per block align: Got: {}, expected: {}",
@@ -253,9 +249,11 @@ impl WAVParser {
                     samples_per_block.unwrap_or(0)
                 )));
             }
-            let calculated_avg_bytes_per_second = (sample_rate_per_second as f32
-                / samples_per_block.unwrap_or(0) as f32)
-                * block_align as f32;
+            let calculated_avg_bytes_per_second = Self::calculate_adpcm_avg_bytes_per_second(
+                sample_rate_per_second,
+                samples_per_block.unwrap_or(0),
+                block_align,
+            );
             if calculated_avg_bytes_per_second.round() != avg_bytes_per_second as f32 {
                 return Err(InvalidFileHeaderError(format!(
                     "Mismatch of the average bytes per second: Got: {}, expected: {}",
@@ -270,6 +268,17 @@ impl WAVParser {
         } else if compression_code == CompressionCode::ImaAdpcm {
             extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
             samples_per_block = Some(convert_to_number(data, 18, 20).unwrap());
+            let calculated_avg_bytes_per_second = Self::calculate_adpcm_avg_bytes_per_second(
+                sample_rate_per_second,
+                samples_per_block.unwrap_or(0),
+                block_align,
+            );
+            if calculated_avg_bytes_per_second.floor() != avg_bytes_per_second as f32 {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the average bytes per second: Got: {}, expected: {}",
+                    calculated_avg_bytes_per_second, avg_bytes_per_second
+                )));
+            }
         } else {
             let calculated_block_align = number_of_channels * bits_per_sample / 8;
             if calculated_block_align != block_align {
@@ -348,5 +357,31 @@ impl WAVParser {
     fn parse_cue_metadata(&mut self, _data: &[u8]) -> HashMap<String, Box<dyn Any>> {
         let properties: HashMap<String, Box<dyn Any>> = HashMap::new();
         properties
+    }
+    fn calculate_adpcm_block_align(sample_rate_per_second: u32, number_of_channels: u16) -> u16 {
+        let calculated_rate = sample_rate_per_second * number_of_channels as u32;
+        let calculated_block_align = if calculated_rate < 22000 {
+            256
+        } else if calculated_rate > 22000 && calculated_rate < 44000 {
+            512
+        } else {
+            1024
+        };
+        calculated_block_align
+    }
+    fn calculate_adpcm_samples_per_block(
+        block_align: u16,
+        number_of_channels: u16,
+        bits_per_sample: u16,
+    ) -> u16 {
+        (((block_align - (7 * number_of_channels)) * 8) / (bits_per_sample * number_of_channels))
+            + 2
+    }
+    fn calculate_adpcm_avg_bytes_per_second(
+        sample_rate_per_second: u32,
+        samples_per_block: u16,
+        block_align: u16,
+    ) -> f32 {
+        (sample_rate_per_second as f32 / samples_per_block as f32) * block_align as f32
     }
 }
