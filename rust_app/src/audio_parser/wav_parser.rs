@@ -5,6 +5,8 @@ use std::{any::Any, collections::HashMap, fs};
 
 use crate::audio_parser::errors::AudioParserError::{self, InvalidFileHeaderError};
 
+const ADPCM_BITS_PER_SAMPLE: u16 = 4;
+
 #[derive(Clone, Debug, Default)]
 pub struct WAVMetadataSubChunk {
     pub name: String,
@@ -32,14 +34,21 @@ pub struct BextMetadata {
 
 #[derive(Debug, Clone, Default)]
 pub struct FmtMetadata {
+    /// Format Tag of the WAV File e.g. PCM, ADPCM etc.
     pub compression_code: CompressionCode,
+    /// Number of channels in the wav file data e.g. 1 for mono and 2 for stereo.
     pub number_of_channels: u16,
+    /// Number of samples captured per second.
     pub sample_rate_per_second: u32,
+    /// Number of bytes captured per second. Formula changes depending with the compression code.
     pub avg_bytes_per_second: u32,
+    /// Size in bytes of a single sample frame.
     pub block_align: u16,
+    /// Number of bits in a single sample frame.
     pub bits_per_sample: u16,
     pub extra_bytes_size: Option<u16>,
     pub extra_bytes: Option<Vec<u8>>,
+    /// Number of sample per block
     pub samples_per_block: Option<u16>,
     pub coefficient_count: Option<u16>,
     pub coefficients: Option<Vec<u8>>, //TODO: We need more info.
@@ -168,6 +177,12 @@ impl WAVParser {
     fn parse_fmt_metadata(&mut self, data: &[u8]) -> Result<FmtMetadata, AudioParserError> {
         let compression_code = parse_compression_code(convert_to_number(data, 0, 2).unwrap());
         let number_of_channels = convert_to_number::<u16>(data, 2, 4).unwrap();
+        if number_of_channels < 1 {
+            return Err(InvalidFileHeaderError(format!(
+                "The channels should be more than 1, instead we got: {}",
+                number_of_channels
+            )));
+        }
         let sample_rate_per_second = convert_to_number::<u32>(data, 4, 8).unwrap();
         let avg_bytes_per_second = convert_to_number::<u32>(data, 8, 12).unwrap();
         let block_align = convert_to_number::<u16>(data, 12, 14).unwrap();
@@ -187,12 +202,25 @@ impl WAVParser {
                     calculated_block_align, block_align
                 )));
             }
+            let calculated_avg_bytes_per_second = sample_rate_per_second * block_align as u32;
+            if calculated_avg_bytes_per_second != avg_bytes_per_second {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of average bytes per second: Got: {}, expected: {}",
+                    calculated_avg_bytes_per_second, avg_bytes_per_second
+                )));
+            }
             extra_bytes_size = None;
             extra_bytes = None;
             samples_per_block = None;
             coefficient_count = None;
             coefficients = None;
         } else if compression_code == CompressionCode::Adpcm {
+            if bits_per_sample != ADPCM_BITS_PER_SAMPLE {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the bits per sample: Got: {}, expected: {}",
+                    bits_per_sample, ADPCM_BITS_PER_SAMPLE
+                )));
+            }
             let calculated_rate = sample_rate_per_second * number_of_channels as u32;
             let calculated_block_align = if calculated_rate < 22000 {
                 256
@@ -208,7 +236,32 @@ impl WAVParser {
                 )));
             }
             extra_bytes_size = Some(convert_to_number(data, 16, 18).unwrap());
+            if extra_bytes_size.unwrap_or(0) < 32 {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the Extra bytes size: Got: {}, expected >= 32",
+                    extra_bytes_size.unwrap_or(0)
+                )));
+            }
             samples_per_block = Some(convert_to_number(data, 18, 20).unwrap());
+            let calculated_samples_per_block = (((block_align - (7 * number_of_channels)) * 8)
+                / (bits_per_sample * number_of_channels))
+                + 2;
+            if samples_per_block.unwrap_or(0) != calculated_samples_per_block {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the samples per block align: Got: {}, expected: {}",
+                    calculated_samples_per_block,
+                    samples_per_block.unwrap_or(0)
+                )));
+            }
+            let calculated_avg_bytes_per_second = (sample_rate_per_second as f32
+                / samples_per_block.unwrap_or(0) as f32)
+                * block_align as f32;
+            if calculated_avg_bytes_per_second.round() != avg_bytes_per_second as f32 {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the average bytes per second: Got: {}, expected: {}",
+                    calculated_avg_bytes_per_second, avg_bytes_per_second
+                )));
+            }
             coefficient_count = Some(convert_to_number(data, 20, 22).unwrap());
             if coefficient_count.unwrap() > 0 {
                 let limit = 4 * coefficient_count.unwrap() as usize;
@@ -247,6 +300,7 @@ impl WAVParser {
         Ok(metadata)
     }
     fn parse_data_metadata(&mut self, data: &[u8]) -> Result<Vec<u8>, AudioParserError> {
+        fs::write("./data.bytes", data).unwrap();
         Ok(data.to_vec())
     }
     fn parse_list_metadata(&mut self, data: &[u8]) -> HashMap<String, String> {
