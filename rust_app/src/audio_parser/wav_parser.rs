@@ -62,13 +62,13 @@ pub struct FmtMetadata {
 pub struct WAVMetadata {
     pub file_size: u32,
     pub bext_metadata: Option<BextMetadata>,
-    pub fmt_metadata: Option<FmtMetadata>,
+    pub fmt_metadata: FmtMetadata,
+    pub data_metadata: Vec<u8>,
 }
 #[derive(Clone, Debug)]
 pub struct WAVParser {
     input_file: String,
     raw_metadata: WAVMetadata,
-    raw_data: Vec<u8>,
 }
 
 impl WAVParser {
@@ -76,7 +76,6 @@ impl WAVParser {
         Self {
             input_file: String::from(file_name),
             raw_metadata: WAVMetadata::default(),
-            raw_data: Vec::new(),
         }
     }
 
@@ -85,7 +84,7 @@ impl WAVParser {
     }
 
     pub fn data(self) -> Vec<u8> {
-        self.raw_data
+        self.raw_metadata.data_metadata
     }
 
     pub fn parse(&mut self) -> Result<(), AudioParserError> {
@@ -120,20 +119,24 @@ impl WAVParser {
                 .unwrap()
                 .to_string();
             start_idx += 4;
-            let sub_chunk_size: usize =
+            let mut sub_chunk_size: usize =
                 u32::from_le_bytes(file_data[start_idx..start_idx + 4].try_into().unwrap())
                     .try_into()
                     .unwrap();
+            if sub_chunk_size % 2 != 0 {
+                // Data should be word aligned, thus must be even.
+                sub_chunk_size += 1;
+            }
             let data: &[u8] = &file_data[start_idx + 4..start_idx + sub_chunk_size + 4];
             if sub_chunk_id == String::from("bext") {
                 let metadata = self.parse_bext_metadata(data).unwrap();
                 self.raw_metadata.bext_metadata = Some(metadata);
             } else if sub_chunk_id == String::from("fmt ") {
                 let metadata = self.parse_fmt_metadata(data).unwrap();
-                self.raw_metadata.fmt_metadata = Some(metadata);
+                self.raw_metadata.fmt_metadata = metadata;
             } else if sub_chunk_id == String::from("data") {
                 fs::write("./data.bytes", data).unwrap();
-                self.raw_data = data.to_vec();
+                self.raw_metadata.data_metadata = data.to_vec();
             } else if sub_chunk_id == String::from("LIST") {
                 self.parse_list_metadata(data);
             } else if sub_chunk_id == String::from("fact") {
@@ -143,7 +146,7 @@ impl WAVParser {
             }
             start_idx += sub_chunk_size + 4;
         }
-        self.parse_audio_data(self.raw_data.clone());
+        self.parse_audio_data();
         Ok(())
     }
     fn parse_bext_metadata(&mut self, data: &[u8]) -> Result<BextMetadata, AudioParserError> {
@@ -330,11 +333,13 @@ impl WAVParser {
         while idx < (data.len() - 1) {
             let sub_chunk_id = fixed_string(&data[idx..idx + 4]);
             idx += 4;
-            let sub_chunk_size = convert_to_number::<u32>(data, idx, idx + 4);
+            let mut sub_chunk_size = convert_to_number::<u32>(data, idx, idx + 4).unwrap();
             idx += 4;
-            let sub_chunk_data =
-                fixed_string(&data[idx..(idx + *sub_chunk_size.as_ref().unwrap() as usize)]);
-            idx += sub_chunk_size.unwrap() as usize;
+            if sub_chunk_size % 2 != 0 {
+                sub_chunk_size += 1;
+            }
+            let sub_chunk_data = fixed_string(&data[idx..(idx + sub_chunk_size as usize)]);
+            idx += sub_chunk_size as usize;
             let info_id = parse_list_info_id(&sub_chunk_id);
             properties.insert(format!("{info_id}"), sub_chunk_data);
         }
@@ -358,8 +363,9 @@ impl WAVParser {
         let properties: HashMap<String, Box<dyn Any>> = HashMap::new();
         properties
     }
-    fn parse_audio_data(&mut self, data: Vec<u8>) {
-        let fmt_metadata = self.raw_metadata.fmt_metadata.as_ref().unwrap();
+    fn parse_audio_data(&mut self) {
+        let fmt_metadata = &self.raw_metadata.fmt_metadata;
+        let data_metadata = &self.raw_metadata.data_metadata;
         if fmt_metadata.compression_code == CompressionCode::Pcm {
         } else if fmt_metadata.compression_code == CompressionCode::Adpcm {
         } else if fmt_metadata.compression_code == CompressionCode::ImaAdpcm {
