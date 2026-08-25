@@ -46,30 +46,21 @@ pub struct FmtMetadata {
     pub block_align: u16,
     /// Number of bits in a single sample frame.
     pub bits_per_sample: u16,
+    /// WAVEFORMATEX(NSIBLE) ONLY: the number of extra bytes coming after.
     pub extra_bytes_size: Option<u16>,
+    /// WAVEFORMATEX(NSIBLE) ONLY: Extra bytes to process, len == [`Self::extra_bytes_size`]
     pub extra_bytes: Option<Vec<u8>>,
-    /// Number of sample per block
+    /// Number of sample per ADPCM block
     pub samples_per_block: Option<u16>,
+    /// Number of coefficients vars
     pub coefficient_count: Option<u16>,
+    /// Coefficients used to (en/de)code the data in WAVEFORMATEX(NSIBLE)
     pub coefficients: Option<Vec<u8>>, //TODO: We need more info.
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct WAVMetadata {
-    //pub sample_rate: u32,
     pub file_size: u32,
-    //pub description: String,
-    //pub originator: String,
-    //pub originator_reference: String,
-    //pub originator_date: String,
-    //pub originator_time: String,
-    //pub version: u16,
-    //pub coding_history: String,
-    //pub compression_code: String,
-    //pub number_of_channels: u16,
-    //pub bytes_per_second: u16,
-    //pub block_align: u16,
-    //pub bits_per_sample: u32,
     pub bext_metadata: Option<BextMetadata>,
     pub fmt_metadata: Option<FmtMetadata>,
 }
@@ -141,8 +132,8 @@ impl WAVParser {
                 let metadata = self.parse_fmt_metadata(data).unwrap();
                 self.raw_metadata.fmt_metadata = Some(metadata);
             } else if sub_chunk_id == String::from("data") {
-                let data = self.parse_data_metadata(data);
-                self.raw_data = data.unwrap();
+                fs::write("./data.bytes", data).unwrap();
+                self.raw_data = data.to_vec();
             } else if sub_chunk_id == String::from("LIST") {
                 self.parse_list_metadata(data);
             } else if sub_chunk_id == String::from("fact") {
@@ -152,6 +143,7 @@ impl WAVParser {
             }
             start_idx += sub_chunk_size + 4;
         }
+        self.parse_audio_data(self.raw_data.clone());
         Ok(())
     }
     fn parse_bext_metadata(&mut self, data: &[u8]) -> Result<BextMetadata, AudioParserError> {
@@ -254,7 +246,7 @@ impl WAVParser {
                 samples_per_block.unwrap_or(0),
                 block_align,
             );
-            if calculated_avg_bytes_per_second.round() != avg_bytes_per_second as f32 {
+            if calculated_avg_bytes_per_second.floor() != avg_bytes_per_second as f32 {
                 return Err(InvalidFileHeaderError(format!(
                     "Mismatch of the average bytes per second: Got: {}, expected: {}",
                     calculated_avg_bytes_per_second, avg_bytes_per_second
@@ -277,6 +269,18 @@ impl WAVParser {
                 return Err(InvalidFileHeaderError(format!(
                     "Mismatch of the average bytes per second: Got: {}, expected: {}",
                     calculated_avg_bytes_per_second, avg_bytes_per_second
+                )));
+            }
+            let calculated_samples_per_block = Self::calculate_dvi_ima_adpcm_samples_per_block(
+                block_align,
+                number_of_channels,
+                bits_per_sample,
+            );
+            if samples_per_block.unwrap_or(0) != calculated_samples_per_block {
+                return Err(InvalidFileHeaderError(format!(
+                    "Mismatch of the samples per block align: Got: {}, expected: {}",
+                    calculated_samples_per_block,
+                    samples_per_block.unwrap_or(0)
                 )));
             }
         } else {
@@ -307,10 +311,6 @@ impl WAVParser {
             coefficients,
         };
         Ok(metadata)
-    }
-    fn parse_data_metadata(&mut self, data: &[u8]) -> Result<Vec<u8>, AudioParserError> {
-        fs::write("./data.bytes", data).unwrap();
-        Ok(data.to_vec())
     }
     fn parse_list_metadata(&mut self, data: &[u8]) -> HashMap<String, String> {
         let mut properties: HashMap<String, String> = HashMap::new();
@@ -358,6 +358,13 @@ impl WAVParser {
         let properties: HashMap<String, Box<dyn Any>> = HashMap::new();
         properties
     }
+    fn parse_audio_data(&mut self, data: Vec<u8>) {
+        let fmt_metadata = self.raw_metadata.fmt_metadata.as_ref().unwrap();
+        if fmt_metadata.compression_code == CompressionCode::Pcm {
+        } else if fmt_metadata.compression_code == CompressionCode::Adpcm {
+        } else if fmt_metadata.compression_code == CompressionCode::ImaAdpcm {
+        }
+    }
     fn calculate_adpcm_block_align(sample_rate_per_second: u32, number_of_channels: u16) -> u16 {
         let calculated_rate = sample_rate_per_second * number_of_channels as u32;
         let calculated_block_align = if calculated_rate < 22000 {
@@ -376,6 +383,14 @@ impl WAVParser {
     ) -> u16 {
         (((block_align - (7 * number_of_channels)) * 8) / (bits_per_sample * number_of_channels))
             + 2
+    }
+    fn calculate_dvi_ima_adpcm_samples_per_block(
+        block_align: u16,
+        number_of_channels: u16,
+        bits_per_sample: u16,
+    ) -> u16 {
+        (((block_align - (4 * number_of_channels)) * 8) / (bits_per_sample * number_of_channels))
+            + 1
     }
     fn calculate_adpcm_avg_bytes_per_second(
         sample_rate_per_second: u32,
