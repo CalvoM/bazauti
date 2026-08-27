@@ -1,5 +1,9 @@
-use crate::audio_parser::utils::{
-    convert_to_number, fixed_string, parse_compression_code, parse_list_info_id, CompressionCode,
+use crate::audio_parser::{
+    errors::RenderingError,
+    utils::{
+        convert_to_number, fixed_string, parse_compression_code, parse_list_info_id,
+        CompressionCode,
+    },
 };
 use plotters::prelude::*;
 use std::{any::Any, collections::HashMap, fs};
@@ -180,6 +184,7 @@ impl WAVParser {
         };
         Ok(metadata)
     }
+    #[allow(unused_assignments)]
     fn parse_fmt_metadata(&mut self, data: &[u8]) -> Result<FmtMetadata, AudioParserError> {
         let compression_code = parse_compression_code(convert_to_number(data, 0, 2).unwrap());
         let number_of_channels = convert_to_number::<u16>(data, 2, 4).unwrap();
@@ -464,7 +469,7 @@ impl WAVParser {
         samples: &[i16],
         start_time: f64,
         duration: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), RenderingError> {
         let sample_rate = self.raw_metadata.fmt_metadata.sample_rate_per_second as f64;
         let channels = self.raw_metadata.fmt_metadata.number_of_channels;
 
@@ -483,12 +488,18 @@ impl WAVParser {
                 let end = ((start_sample + sample_count) * 2).min(samples.len());
                 &samples[start..end]
             }
-            _ => return Err(format!("Unsupported channel count: {channels}").into()),
+            _ => {
+                return Err(RenderingError::ChartSetupError(format!(
+                    "Unsupported channel count: {channels}"
+                )));
+            }
         };
 
         let root = BitMapBackend::new("waveform.png", (WIDTH, HEIGHT)).into_drawing_area();
 
-        root.fill(&WHITE)?;
+        let _ = root
+            .fill(&WHITE)
+            .map_err(|e| RenderingError::ChartSetupError(e.to_string()));
 
         match channels {
             1 => {
@@ -531,7 +542,9 @@ impl WAVParser {
             _ => unreachable!(),
         }
 
-        root.present()?;
+        let _ = root
+            .present()
+            .map_err(|e| RenderingError::ChartDrawError(e.to_string()));
 
         Ok(())
     }
@@ -544,7 +557,7 @@ impl WAVParser {
         start_time: f64,
         duration: f64,
         channel_name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>>
+    ) -> Result<(), RenderingError>
     where
         DB::ErrorType: 'static,
     {
@@ -556,27 +569,33 @@ impl WAVParser {
             .build_cartesian_2d(
                 start_time..start_time + duration,
                 i32::from(i16::MIN)..i32::from(i16::MAX),
-            )?;
+            )
+            .map_err(|e| RenderingError::ChartSetupError(e.to_string()))?;
 
         chart
             .configure_mesh()
             .x_desc("Time (s)")
             .y_desc("Amplitude")
-            .draw()?;
+            .draw()
+            .map_err(|e| RenderingError::ChartDrawError(e.to_string()))?;
 
-        chart.draw_series(LineSeries::new(
-            samples.iter().enumerate().map(|(i, &sample)| {
-                let time = start_time + i as f64 / sample_rate;
+        chart
+            .draw_series(LineSeries::new(
+                samples.iter().enumerate().map(|(i, &sample)| {
+                    let time = start_time + i as f64 / sample_rate;
 
-                (time, i32::from(sample))
-            }),
-            &BLUE,
-        ))?;
+                    (time, i32::from(sample))
+                }),
+                &BLUE,
+            ))
+            .map_err(|e| RenderingError::ChartDrawError(e.to_string()))?;
 
-        chart.draw_series(LineSeries::new(
-            [(start_time, 0), (start_time + duration, 0)],
-            &BLACK.mix(0.3),
-        ))?;
+        chart
+            .draw_series(LineSeries::new(
+                [(start_time, 0), (start_time + duration, 0)],
+                &BLACK.mix(0.3),
+            ))
+            .map_err(|e| RenderingError::ChartDrawError(e.to_string()))?;
 
         Ok(())
     }
@@ -585,7 +604,7 @@ impl WAVParser {
         samples: &[u8],
         start_time: f64,
         duration: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), RenderingError> {
         let sample_rate = self.raw_metadata.fmt_metadata.sample_rate_per_second as f64;
         let channels = self.raw_metadata.fmt_metadata.number_of_channels;
 
@@ -595,7 +614,11 @@ impl WAVParser {
         let start = match channels {
             1 => start_frame,
             2 => start_frame * 2,
-            _ => return Err(format!("Unsupported channel count: {channels}").into()),
+            _ => {
+                return Err(RenderingError::ChartSetupError(format!(
+                    "Unsupported channel count: {channels}"
+                )));
+            }
         };
 
         let end = match channels {
@@ -605,14 +628,18 @@ impl WAVParser {
         };
 
         if start >= samples.len() || start >= end {
-            return Err("Requested time range contains no samples".into());
+            return Err(RenderingError::ChartSetupError(
+                "Requested time range contains no samples".into(),
+            ));
         }
 
         let samples = &samples[start..end];
 
         let root = BitMapBackend::new("waveform.png", (1600, 700)).into_drawing_area();
 
-        root.fill(&WHITE)?;
+        let _ = root
+            .fill(&WHITE)
+            .map_err(|e| RenderingError::ChartDrawError(e.to_string()));
 
         match channels {
             1 => {
@@ -651,7 +678,9 @@ impl WAVParser {
             _ => unreachable!(),
         }
 
-        root.present()?;
+        let _ = root
+            .present()
+            .map_err(|e| RenderingError::ChartDrawError(e.to_string()));
 
         Ok(())
     }
@@ -663,7 +692,7 @@ impl WAVParser {
         start_time: f64,
         duration: f64,
         channel_name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>>
+    ) -> Result<(), RenderingError>
     where
         DB: DrawingBackend,
         DB::ErrorType: 'static,
@@ -674,28 +703,34 @@ impl WAVParser {
             .margin(15)
             .x_label_area_size(40)
             .y_label_area_size(60)
-            .build_cartesian_2d(start_time..start_time + duration, 0u32..255u32)?;
+            .build_cartesian_2d(start_time..start_time + duration, 0u32..255u32)
+            .map_err(|e| RenderingError::ChartSetupError(e.to_string()))?;
 
         chart
             .configure_mesh()
             .x_desc("Time (s)")
             .y_desc("Amplitude")
-            .draw()?;
+            .draw()
+            .map_err(|e| RenderingError::ChartDrawError(e.to_string()))?;
 
-        chart.draw_series(LineSeries::new(
-            samples.enumerate().map(|(i, sample)| {
-                let time = start_time + i as f64 / sample_rate;
+        chart
+            .draw_series(LineSeries::new(
+                samples.enumerate().map(|(i, sample)| {
+                    let time = start_time + i as f64 / sample_rate;
 
-                (time, u32::from(sample))
-            }),
-            &BLUE,
-        ))?;
+                    (time, u32::from(sample))
+                }),
+                &BLUE,
+            ))
+            .map_err(|e| RenderingError::ChartSetupError(e.to_string()))?;
 
         // 8-bit PCM silence is centered at 128.
-        chart.draw_series(LineSeries::new(
-            [(start_time, 128), (start_time + duration, 128)],
-            &BLACK.mix(0.3),
-        ))?;
+        chart
+            .draw_series(LineSeries::new(
+                [(start_time, 128), (start_time + duration, 128)],
+                &BLACK.mix(0.3),
+            ))
+            .map_err(|e| RenderingError::ChartSetupError(e.to_string()))?;
 
         Ok(())
     }
