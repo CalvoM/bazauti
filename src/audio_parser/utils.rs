@@ -84,8 +84,8 @@ pub enum CompressionCode {
     G711Alaw = 6,
     G711Ulaw = 7,
     ImaAdpcm = 17,
-    Gsm610 = 49,
     DolbyAc2 = 48,
+    Gsm610 = 49,
     MsMpeg = 80,
     Mp3 = 85,
     Aac = 255,
@@ -116,22 +116,24 @@ impl std::fmt::Display for CompressionCode {
     }
 }
 
-pub fn parse_compression_code(code: u16) -> CompressionCode {
-    match code {
-        1 => CompressionCode::Pcm,
-        2 => CompressionCode::Adpcm,
-        3 => CompressionCode::IeeeFloat,
-        6 => CompressionCode::G711Alaw,
-        7 => CompressionCode::G711Ulaw,
-        17 => CompressionCode::ImaAdpcm,
-        49 => CompressionCode::Gsm610,
-        48 => CompressionCode::DolbyAc2,
-        80 => CompressionCode::MsMpeg,
-        85 => CompressionCode::Mp3,
-        255 => CompressionCode::Aac,
-        61868 => CompressionCode::Flac,
-        65534 => CompressionCode::Extensible,
-        _ => CompressionCode::Unknown,
+impl From<u16> for CompressionCode {
+    fn from(code: u16) -> Self {
+        match code {
+            1 => Self::Pcm,
+            2 => Self::Adpcm,
+            3 => Self::IeeeFloat,
+            6 => Self::G711Alaw,
+            7 => Self::G711Ulaw,
+            17 => Self::ImaAdpcm,
+            48 => Self::DolbyAc2,
+            49 => Self::Gsm610,
+            80 => Self::MsMpeg,
+            85 => Self::Mp3,
+            255 => Self::Aac,
+            61868 => Self::Flac,
+            65534 => Self::Extensible,
+            _ => Self::Unknown,
+        }
     }
 }
 
@@ -197,31 +199,112 @@ impl std::fmt::Display for ListInfoId {
     }
 }
 
-pub fn parse_list_info_id(info_id: &str) -> ListInfoId {
-    match info_id {
-        "IARL" => ListInfoId::Iarl,
-        "IART" => ListInfoId::Iart,
-        "ICMS" => ListInfoId::Icms,
-        "ICMT" => ListInfoId::Icmt,
-        "ICOP" => ListInfoId::Icop,
-        "ICRD" => ListInfoId::Icrd,
-        "ICRP" => ListInfoId::Icrp,
-        "IDIM" => ListInfoId::Idim,
-        "IDPI" => ListInfoId::Idpi,
-        "IENG" => ListInfoId::Ieng,
-        "IGNR" => ListInfoId::Ignr,
-        "IKEY" => ListInfoId::Ikey,
-        "ILGT" => ListInfoId::Ilgt,
-        "IMED" => ListInfoId::Imed,
-        "INAM" => ListInfoId::Inam,
-        "IPLT" => ListInfoId::Iplt,
-        "IPRD" => ListInfoId::Iprd,
-        "ISBJ" => ListInfoId::Isbj,
-        "ISFT" => ListInfoId::Isft,
-        "ISHP" => ListInfoId::Ishp,
-        "ISRC" => ListInfoId::Isrc,
-        "ISRF" => ListInfoId::Isrf,
-        "ITCH" => ListInfoId::Itch,
-        _ => ListInfoId::Unknown,
+impl From<[u8; 4]> for ListInfoId {
+    fn from(id: [u8; 4]) -> Self {
+        match &id {
+            b"IARL" => Self::Iarl,
+            b"IART" => Self::Iart,
+            b"ICMS" => Self::Icms,
+            b"ICMT" => Self::Icmt,
+            b"ICOP" => Self::Icop,
+            b"ICRD" => Self::Icrd,
+            b"ICRP" => Self::Icrp,
+            b"IDIM" => Self::Idim,
+            b"IDPI" => Self::Idpi,
+            b"IENG" => Self::Ieng,
+            b"IGNR" => Self::Ignr,
+            b"IKEY" => Self::Ikey,
+            b"ILGT" => Self::Ilgt,
+            b"IMED" => Self::Imed,
+            b"INAM" => Self::Inam,
+            b"IPLT" => Self::Iplt,
+            b"IPRD" => Self::Iprd,
+            b"ISBJ" => Self::Isbj,
+            b"ISFT" => Self::Isft,
+            b"ISHP" => Self::Ishp,
+            b"ISRC" => Self::Isrc,
+            b"ISRF" => Self::Isrf,
+            b"ITCH" => Self::Itch,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl ListInfoId {
+    pub const fn as_bytes(self) -> [u8; 4] {
+        match self {
+            Self::Unknown => *b"UNKN",
+            Self::Iarl => *b"IARL",
+            Self::Iart => *b"IART",
+            Self::Icms => *b"ICMS",
+            Self::Icmt => *b"ICMT",
+            Self::Icop => *b"ICOP",
+            Self::Icrd => *b"ICRD",
+            Self::Icrp => *b"ICRP",
+            Self::Idim => *b"IDIM",
+            Self::Idpi => *b"IDPI",
+            Self::Ieng => *b"IENG",
+            Self::Ignr => *b"IGNR",
+            Self::Ikey => *b"IKEY",
+            Self::Ilgt => *b"ILGT",
+            Self::Imed => *b"IMED",
+            Self::Inam => *b"INAM",
+            Self::Iplt => *b"IPLT",
+            Self::Iprd => *b"IPRD",
+            Self::Isbj => *b"ISBJ",
+            Self::Isft => *b"ISFT",
+            Self::Ishp => *b"ISHP",
+            Self::Isrc => *b"ISRC",
+            Self::Isrf => *b"ISRF",
+            Self::Itch => *b"ITCH",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fixed_string_non_null() {
+        let test_payload: [u8; 5] = [72, 101, 108, 108, 111];
+        let ret_val = fixed_string(&test_payload);
+        assert_eq!(ret_val, String::from("Hello"));
+    }
+
+    #[test]
+    fn test_fixed_string_with_null() {
+        let test_payload: [u8; 7] = [72, 101, 108, 108, 0, 0, 111];
+        let ret_val = fixed_string(&test_payload);
+        assert_eq!(ret_val, String::from("Hell"));
+    }
+
+    #[test]
+    fn test_convert_to_number_u16() -> Result<(), AudioParserError> {
+        let test_payload: [u8; 6] = [2, 1, 5, 6, 7, 8];
+        let ret_val = convert_to_number::<u16>(&test_payload, 0, 2)?;
+        assert_eq!(ret_val, 258);
+        Ok(())
+    }
+    #[test]
+    fn test_convert_to_number_i16() -> Result<(), AudioParserError> {
+        let test_payload: [u8; 6] = [0, 255, 5, 6, 7, 8];
+        let ret_val = convert_to_number::<i16>(&test_payload, 0, 2)?;
+        assert_eq!(ret_val, -256);
+        Ok(())
+    }
+    #[test]
+    fn test_convert_to_number_u32() -> Result<(), AudioParserError> {
+        let test_payload: [u8; 6] = [2, 1, 1, 0, 0, 8];
+        let ret_val = convert_to_number::<u32>(&test_payload, 1, 5)?;
+        assert_eq!(ret_val, 257);
+        Ok(())
+    }
+    #[test]
+    fn test_convert_to_number_u64() -> Result<(), AudioParserError> {
+        let test_payload: [u8; 12] = [2, 1, 5, 6, 1, 8, 0, 0, 0, 0, 0, 0];
+        let ret_val = convert_to_number::<u64>(&test_payload, 4, 12)?;
+        assert_eq!(ret_val, 2049);
+        Ok(())
     }
 }

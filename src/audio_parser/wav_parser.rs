@@ -1,9 +1,6 @@
 use crate::audio_parser::{
     errors::RenderingError,
-    utils::{
-        convert_to_number, fixed_string, parse_compression_code, parse_list_info_id,
-        CompressionCode,
-    },
+    utils::{convert_to_number, fixed_string, CompressionCode, ListInfoId},
 };
 use plotters::prelude::*;
 use std::{any::Any, collections::HashMap, fs};
@@ -186,7 +183,7 @@ impl WAVParser {
     }
     #[allow(unused_assignments)]
     fn parse_fmt_metadata(&mut self, data: &[u8]) -> Result<FmtMetadata, AudioParserError> {
-        let compression_code = parse_compression_code(convert_to_number(data, 0, 2).unwrap());
+        let compression_code = CompressionCode::from(convert_to_number::<u16>(data, 0, 2).unwrap());
         let number_of_channels = convert_to_number::<u16>(data, 2, 4).unwrap();
         if number_of_channels < 1 {
             return Err(InvalidFileHeaderError(format!(
@@ -347,7 +344,9 @@ impl WAVParser {
         let mut properties: HashMap<String, String> = HashMap::new();
         let mut idx = 0;
         while idx < (data.len() - 1) {
-            let sub_chunk_id = fixed_string(&data[idx..idx + 4]);
+            let sub_chunk_id: [u8; 4] = data[idx..idx + 4]
+                .try_into()
+                .expect("sub chunk id should have a length of 4");
             idx += 4;
             let mut sub_chunk_size = convert_to_number::<u32>(data, idx, idx + 4).unwrap();
             idx += 4;
@@ -356,7 +355,7 @@ impl WAVParser {
             }
             let sub_chunk_data = fixed_string(&data[idx..(idx + sub_chunk_size as usize)]);
             idx += sub_chunk_size as usize;
-            let info_id = parse_list_info_id(&sub_chunk_id);
+            let info_id = ListInfoId::from(sub_chunk_id);
             properties.insert(format!("{info_id}"), sub_chunk_data);
         }
         properties
@@ -734,4 +733,9 @@ impl WAVParser {
 
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 }

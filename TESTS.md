@@ -2,10 +2,8 @@
 
   ## Iteration 1: Core Helpers
 
-  - [ ] Add unit tests for `fixed_string`.
-  - [ ] Add unit tests for `convert_to_number`.
-  - [ ] Add unit tests for `parse_compression_code`.
-  - [ ] Add unit tests for `parse_list_info_id`.
+  - [x] Add unit tests for `fixed_string`.
+  - [x] Add unit tests for `convert_to_number`.
 
   ## Iteration 2: PCM Parsing
 
