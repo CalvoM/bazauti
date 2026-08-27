@@ -1,4 +1,4 @@
-• # WAV Parser Test Iteration
+# WAV Parser Test Iteration
 
   ## Iteration 1: Core Helpers
 
