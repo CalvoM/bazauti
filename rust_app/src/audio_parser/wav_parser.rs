@@ -1,11 +1,20 @@
 use crate::audio_parser::utils::{
     convert_to_number, fixed_string, parse_compression_code, parse_list_info_id, CompressionCode,
 };
+use plotters::prelude::*;
 use std::{any::Any, collections::HashMap, fs};
 
 use crate::audio_parser::errors::AudioParserError::{self, InvalidFileHeaderError};
 
 const ADPCM_BITS_PER_SAMPLE: u16 = 4;
+const WIDTH: u32 = 1600;
+const HEIGHT: u32 = 700;
+
+#[derive(Clone, Debug)]
+pub enum PCMData {
+    U8(Vec<u8>),
+    I16(Vec<i16>),
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct WAVMetadataSubChunk {
@@ -69,6 +78,7 @@ pub struct WAVMetadata {
 pub struct WAVParser {
     input_file: String,
     raw_metadata: WAVMetadata,
+    raw_data: Option<PCMData>,
 }
 
 impl WAVParser {
@@ -76,6 +86,7 @@ impl WAVParser {
         Self {
             input_file: String::from(file_name),
             raw_metadata: WAVMetadata::default(),
+            raw_data: None,
         }
     }
 
@@ -365,10 +376,52 @@ impl WAVParser {
     }
     fn parse_audio_data(&mut self) {
         let fmt_metadata = &self.raw_metadata.fmt_metadata;
-        let data_metadata = &self.raw_metadata.data_metadata;
         if fmt_metadata.compression_code == CompressionCode::Pcm {
+            self.parse_audio_pcm_data();
         } else if fmt_metadata.compression_code == CompressionCode::Adpcm {
         } else if fmt_metadata.compression_code == CompressionCode::ImaAdpcm {
+        }
+    }
+    fn parse_audio_pcm_data(&mut self) {
+        let fmt_metadata = &self.raw_metadata.fmt_metadata;
+        let data_metadata = &self.raw_metadata.data_metadata;
+        let number_of_channels = fmt_metadata.number_of_channels;
+        let bits_per_sample = fmt_metadata.bits_per_sample;
+        let block_align = fmt_metadata.block_align;
+        let mut raw_data = if bits_per_sample == 8 {
+            PCMData::U8(Vec::new())
+        } else {
+            PCMData::I16(Vec::new())
+        };
+        for sample in data_metadata.chunks_exact(block_align as usize) {
+            match (&mut raw_data, number_of_channels, bits_per_sample) {
+                (PCMData::U8(data), 1, 8) => data.push(sample[0]),
+                (PCMData::U8(data), 2, 8) => {
+                    let left = sample[0];
+                    let right = sample[1];
+                    data.push(left);
+                    data.push(right);
+                }
+                (PCMData::I16(data), 1, 16) => {
+                    let sample = i16::from_le_bytes([sample[0], sample[1]]);
+                    data.push(sample);
+                }
+                (PCMData::I16(data), 2, 16) => {
+                    let left = i16::from_le_bytes([sample[0], sample[1]]);
+                    let right = i16::from_le_bytes([sample[2], sample[3]]);
+
+                    data.push(left);
+                    data.push(right);
+                }
+                _ => unreachable!(),
+            }
+        }
+        self.raw_data = Some(raw_data);
+    }
+    pub fn render(&mut self) {
+        match self.raw_data.as_ref().unwrap() {
+            PCMData::U8(samples) => self.plot_u8(&samples, 0.0, 0.5).unwrap(),
+            PCMData::I16(samples) => self.plot_i16(&samples, 0.0, 0.5).unwrap(),
         }
     }
     fn calculate_adpcm_block_align(sample_rate_per_second: u32, number_of_channels: u16) -> u16 {
@@ -404,5 +457,246 @@ impl WAVParser {
         block_align: u16,
     ) -> f32 {
         (sample_rate_per_second as f32 / samples_per_block as f32) * block_align as f32
+    }
+
+    fn plot_i16(
+        &self,
+        samples: &[i16],
+        start_time: f64,
+        duration: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let sample_rate = self.raw_metadata.fmt_metadata.sample_rate_per_second as f64;
+        let channels = self.raw_metadata.fmt_metadata.number_of_channels;
+
+        let start_sample = (start_time * sample_rate) as usize;
+        let sample_count = (duration * sample_rate) as usize;
+
+        let start_sample = start_sample.min(samples.len());
+
+        let samples = match channels {
+            1 => {
+                let end = (start_sample + sample_count).min(samples.len());
+                &samples[start_sample..end]
+            }
+            2 => {
+                let start = (start_sample * 2).min(samples.len());
+                let end = ((start_sample + sample_count) * 2).min(samples.len());
+                &samples[start..end]
+            }
+            _ => return Err(format!("Unsupported channel count: {channels}").into()),
+        };
+
+        let root = BitMapBackend::new("waveform.png", (WIDTH, HEIGHT)).into_drawing_area();
+
+        root.fill(&WHITE)?;
+
+        match channels {
+            1 => {
+                self.draw_i16_channel(&root, samples, sample_rate, start_time, duration, "Mono")?;
+            }
+
+            2 => {
+                let areas = root.split_evenly((2, 1));
+
+                self.draw_i16_channel(
+                    &areas[0],
+                    samples
+                        .iter()
+                        .step_by(2)
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    sample_rate,
+                    start_time,
+                    duration,
+                    "Left",
+                )?;
+
+                self.draw_i16_channel(
+                    &areas[1],
+                    samples
+                        .iter()
+                        .skip(1)
+                        .step_by(2)
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    sample_rate,
+                    start_time,
+                    duration,
+                    "Right",
+                )?;
+            }
+
+            _ => unreachable!(),
+        }
+
+        root.present()?;
+
+        Ok(())
+    }
+
+    fn draw_i16_channel<DB: DrawingBackend>(
+        &self,
+        area: &DrawingArea<DB, plotters::coord::Shift>,
+        samples: &[i16],
+        sample_rate: f64,
+        start_time: f64,
+        duration: f64,
+        channel_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        DB::ErrorType: 'static,
+    {
+        let mut chart = ChartBuilder::on(area)
+            .caption(format!("PCM Waveform - {channel_name}"), ("sans-serif", 20))
+            .margin(15)
+            .x_label_area_size(40)
+            .y_label_area_size(60)
+            .build_cartesian_2d(
+                start_time..start_time + duration,
+                i32::from(i16::MIN)..i32::from(i16::MAX),
+            )?;
+
+        chart
+            .configure_mesh()
+            .x_desc("Time (s)")
+            .y_desc("Amplitude")
+            .draw()?;
+
+        chart.draw_series(LineSeries::new(
+            samples.iter().enumerate().map(|(i, &sample)| {
+                let time = start_time + i as f64 / sample_rate;
+
+                (time, i32::from(sample))
+            }),
+            &BLUE,
+        ))?;
+
+        chart.draw_series(LineSeries::new(
+            [(start_time, 0), (start_time + duration, 0)],
+            &BLACK.mix(0.3),
+        ))?;
+
+        Ok(())
+    }
+    fn plot_u8(
+        &self,
+        samples: &[u8],
+        start_time: f64,
+        duration: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let sample_rate = self.raw_metadata.fmt_metadata.sample_rate_per_second as f64;
+        let channels = self.raw_metadata.fmt_metadata.number_of_channels;
+
+        let start_frame = (start_time * sample_rate) as usize;
+        let frame_count = (duration * sample_rate) as usize;
+
+        let start = match channels {
+            1 => start_frame,
+            2 => start_frame * 2,
+            _ => return Err(format!("Unsupported channel count: {channels}").into()),
+        };
+
+        let end = match channels {
+            1 => (start_frame + frame_count).min(samples.len()),
+            2 => ((start_frame + frame_count) * 2).min(samples.len()),
+            _ => unreachable!(),
+        };
+
+        if start >= samples.len() || start >= end {
+            return Err("Requested time range contains no samples".into());
+        }
+
+        let samples = &samples[start..end];
+
+        let root = BitMapBackend::new("waveform.png", (1600, 700)).into_drawing_area();
+
+        root.fill(&WHITE)?;
+
+        match channels {
+            1 => {
+                self.draw_u8_channel(
+                    &root,
+                    samples.iter().copied(),
+                    sample_rate,
+                    start_time,
+                    duration,
+                    "Mono",
+                )?;
+            }
+
+            2 => {
+                let areas = root.split_evenly((2, 1));
+
+                self.draw_u8_channel(
+                    &areas[0],
+                    samples.iter().step_by(2).copied(),
+                    sample_rate,
+                    start_time,
+                    duration,
+                    "Left",
+                )?;
+
+                self.draw_u8_channel(
+                    &areas[1],
+                    samples.iter().skip(1).step_by(2).copied(),
+                    sample_rate,
+                    start_time,
+                    duration,
+                    "Right",
+                )?;
+            }
+
+            _ => unreachable!(),
+        }
+
+        root.present()?;
+
+        Ok(())
+    }
+    fn draw_u8_channel<DB, I>(
+        &self,
+        area: &DrawingArea<DB, plotters::coord::Shift>,
+        samples: I,
+        sample_rate: f64,
+        start_time: f64,
+        duration: f64,
+        channel_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        DB: DrawingBackend,
+        DB::ErrorType: 'static,
+        I: Iterator<Item = u8>,
+    {
+        let mut chart = ChartBuilder::on(area)
+            .caption(format!("PCM Waveform - {channel_name}"), ("sans-serif", 20))
+            .margin(15)
+            .x_label_area_size(40)
+            .y_label_area_size(60)
+            .build_cartesian_2d(start_time..start_time + duration, 0u32..255u32)?;
+
+        chart
+            .configure_mesh()
+            .x_desc("Time (s)")
+            .y_desc("Amplitude")
+            .draw()?;
+
+        chart.draw_series(LineSeries::new(
+            samples.enumerate().map(|(i, sample)| {
+                let time = start_time + i as f64 / sample_rate;
+
+                (time, u32::from(sample))
+            }),
+            &BLUE,
+        ))?;
+
+        // 8-bit PCM silence is centered at 128.
+        chart.draw_series(LineSeries::new(
+            [(start_time, 128), (start_time + duration, 128)],
+            &BLACK.mix(0.3),
+        ))?;
+
+        Ok(())
     }
 }
