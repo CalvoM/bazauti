@@ -17,12 +17,7 @@ pub enum PCMData {
     I16(Vec<i16>),
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct WAVMetadataSubChunk {
-    pub name: String,
-    pub size: u32,
-}
-
+/// Represents the data in the "bext" sub chunk
 #[derive(Debug, Clone)]
 pub struct BextMetadata {
     pub description: String,
@@ -42,6 +37,7 @@ pub struct BextMetadata {
     pub coding_history: String,
 }
 
+/// Represents the data in the "fmt" sub chunk
 #[derive(Debug, Clone, Default)]
 pub struct FmtMetadata {
     /// Format Tag of the WAV File e.g. PCM, ADPCM etc.
@@ -68,6 +64,7 @@ pub struct FmtMetadata {
     pub coefficients: Option<Vec<u8>>, //TODO: We need more info.
 }
 
+/// Represents the metadata for the WAV file.
 #[derive(Clone, Debug, Default)]
 pub struct WAVMetadata {
     pub file_size: u32,
