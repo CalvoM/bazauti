@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use crate::audio_parser::{
     errors::RenderingError,
     utils::{convert_to_number, fixed_string, CompressionCode, ListInfoId},
@@ -84,6 +85,20 @@ pub struct WAVParser {
     input_file: String,
     raw_metadata: WAVMetadata,
     raw_data: Option<AudioData>,
+}
+
+#[derive(Debug, Default, Copy, Clone)]
+pub struct ADPCMChannelMetaData {
+    predictor: u8,
+    sample1: i16,
+    sample2: i16,
+    coeff1: i16,
+    coeff2: i16,
+    delta: i16,
+}
+#[derive(Debug)]
+pub struct ADPCMDecodeContext {
+    channels: [ADPCMChannelMetaData; 2],
 }
 
 impl WAVParser {
@@ -391,6 +406,115 @@ impl WAVParser {
         } else if fmt_metadata.compression_code == CompressionCode::ImaAdpcm {
         }
     }
+    fn parse_audio_adpcm_unified(&mut self) -> AudioData {
+        let fmt_metadata = &self.raw_metadata.fmt_metadata;
+        let data = &self.raw_metadata.data_metadata;
+        let coefficients = fmt_metadata.coefficients.as_ref().unwrap();
+        let block_align = fmt_metadata.block_align;
+        let raw_data = AudioData::I16(Vec::new());
+        let mut starting_idx = 0;
+        let is_stereo = if fmt_metadata.number_of_channels == 2 {
+            true
+        } else {
+            false
+        };
+        let mut decode_ctx = ADPCMDecodeContext {
+            channels: [ADPCMChannelMetaData::default(); 2],
+        };
+        while (starting_idx + block_align as usize) <= data.len() {
+            let mut inner_block_idx = 0;
+            // Get predictors
+            decode_ctx.channels[0].predictor = *data.get(starting_idx + inner_block_idx).unwrap();
+            inner_block_idx += 1;
+            if is_stereo {
+                decode_ctx.channels[1].predictor =
+                    *data.get(starting_idx + inner_block_idx).unwrap();
+                inner_block_idx += 1;
+            }
+            // Get Deltas
+            decode_ctx.channels[0].delta = convert_to_number::<i16>(
+                &data,
+                starting_idx + inner_block_idx,
+                starting_idx + inner_block_idx + 2,
+            )
+            .unwrap();
+            inner_block_idx += 2;
+            if is_stereo {
+                decode_ctx.channels[1].delta = convert_to_number::<i16>(
+                    &data,
+                    starting_idx + inner_block_idx,
+                    starting_idx + inner_block_idx + 2,
+                )
+                .unwrap();
+                inner_block_idx += 2;
+            }
+            //Get sample1
+            decode_ctx.channels[0].sample1 = convert_to_number::<i16>(
+                &data,
+                starting_idx + inner_block_idx,
+                starting_idx + inner_block_idx + 2,
+            )
+            .unwrap();
+            inner_block_idx += 2;
+            if is_stereo {
+                decode_ctx.channels[1].sample1 = convert_to_number::<i16>(
+                    &data,
+                    starting_idx + inner_block_idx,
+                    starting_idx + inner_block_idx + 2,
+                )
+                .unwrap();
+                inner_block_idx += 2;
+            }
+            // Get Sample2
+            decode_ctx.channels[0].sample2 = convert_to_number::<i16>(
+                &data,
+                starting_idx + inner_block_idx,
+                starting_idx + inner_block_idx + 2,
+            )
+            .unwrap();
+            inner_block_idx += 2;
+            if is_stereo {
+                decode_ctx.channels[1].sample2 = convert_to_number::<i16>(
+                    &data,
+                    starting_idx + inner_block_idx,
+                    starting_idx + inner_block_idx + 2,
+                )
+                .unwrap();
+                inner_block_idx += 2;
+            }
+            // Calculated the coeff1 and coeff2
+            let coefficient_offset = (decode_ctx.channels[0].predictor * 4) as usize;
+            decode_ctx.channels[0].coeff1 = convert_to_number::<i16>(
+                coefficients,
+                coefficient_offset,
+                (coefficient_offset) + 2,
+            )
+            .unwrap();
+            decode_ctx.channels[0].coeff2 = convert_to_number::<i16>(
+                coefficients,
+                coefficient_offset + 2,
+                (coefficient_offset) + 4,
+            )
+            .unwrap();
+            if is_stereo {
+                decode_ctx.channels[1].coeff1 = convert_to_number::<i16>(
+                    coefficients,
+                    coefficient_offset,
+                    (coefficient_offset) + 2,
+                )
+                .unwrap();
+                decode_ctx.channels[1].coeff2 = convert_to_number::<i16>(
+                    coefficients,
+                    coefficient_offset + 2,
+                    (coefficient_offset) + 4,
+                )
+                .unwrap();
+            }
+            break;
+        }
+        dbg!(decode_ctx);
+        raw_data
+    }
     fn parse_audio_pcm_data(&mut self) {
         let fmt_metadata = &self.raw_metadata.fmt_metadata;
         let data_metadata = &self.raw_metadata.data_metadata;
@@ -427,13 +551,14 @@ impl WAVParser {
         }
         self.raw_data = Some(raw_data);
     }
-    fn parse_audio_adpcm_data(&mut self) {
+    fn parse_audio_adpcm_mono(&self) -> AudioData {
         let fmt_metadata = &self.raw_metadata.fmt_metadata;
         let data = &self.raw_metadata.data_metadata;
         let coefficients = fmt_metadata.coefficients.as_ref().unwrap();
+        let block_align = fmt_metadata.block_align;
         let mut starting_idx = 0;
         let mut raw_data = AudioData::I16(Vec::new());
-        while (starting_idx + fmt_metadata.block_align as usize) <= data.len() {
+        while (starting_idx + block_align as usize) <= data.len() {
             let mut inner_block_idx = 0;
             let predictor = data.get(starting_idx + inner_block_idx).unwrap();
             inner_block_idx += 1;
@@ -474,7 +599,7 @@ impl WAVParser {
             if let AudioData::I16(ref mut samples) = raw_data {
                 samples.extend_from_slice(&[sample2, sample1]);
             }
-            while inner_block_idx < (fmt_metadata.block_align as usize) {
+            while inner_block_idx < (block_align as usize) {
                 for step in (0..=1).rev() {
                     let predicted_sample: i32 = ((sample1 as i32 * coeff1 as i32)
                         + (sample2 as i32 * coeff2 as i32))
@@ -501,13 +626,17 @@ impl WAVParser {
             }
             starting_idx += inner_block_idx;
         }
-        //dbg!(raw_data);
-        self.raw_data = Some(raw_data);
+        raw_data
+    }
+    fn parse_audio_adpcm_data(&mut self) {
+        let fmt_metadata = &self.raw_metadata.fmt_metadata;
+        let channels = fmt_metadata.number_of_channels;
+        self.raw_data = Some(self.parse_audio_adpcm_unified());
     }
     pub fn render(&mut self) {
         match self.raw_data.as_ref().unwrap() {
-            AudioData::U8(samples) => self.plot_u8(&samples, 0.0, 17.0).unwrap(),
-            AudioData::I16(samples) => self.plot_i16(&samples, 0.0, 17.0).unwrap(),
+            AudioData::U8(samples) => self.plot_u8(&samples, 0.0, 1.5).unwrap(),
+            AudioData::I16(samples) => self.plot_i16(&samples, 0.0, 1.5).unwrap(),
         }
     }
     fn calculate_adpcm_block_align(sample_rate_per_second: u32, number_of_channels: u16) -> u16 {
@@ -643,7 +772,13 @@ impl WAVParser {
         DB::ErrorType: 'static,
     {
         let mut chart = ChartBuilder::on(area)
-            .caption(format!("PCM Waveform - {channel_name}"), ("sans-serif", 20))
+            .caption(
+                format!(
+                    "{} Waveform - {channel_name}",
+                    self.raw_metadata.fmt_metadata.compression_code
+                ),
+                ("sans-serif", 20),
+            )
             .margin(15)
             .x_label_area_size(40)
             .y_label_area_size(60)
@@ -780,7 +915,13 @@ impl WAVParser {
         I: Iterator<Item = u8>,
     {
         let mut chart = ChartBuilder::on(area)
-            .caption(format!("PCM Waveform - {channel_name}"), ("sans-serif", 20))
+            .caption(
+                format!(
+                    "{} Waveform - {channel_name}",
+                    self.raw_metadata.fmt_metadata.compression_code
+                ),
+                ("sans-serif", 20),
+            )
             .margin(15)
             .x_label_area_size(40)
             .y_label_area_size(60)

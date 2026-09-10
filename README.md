@@ -10,3 +10,4 @@ Understanding audio processing, I do not know what this will be...
 - https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/Docs/RIFFNEW.pdf
 - https://icculus.org/SDL_sound/downloads/external_documentation/wavecomp.htm
 - https://wiki.multimedia.cx/index.php/Microsoft_ADPCM
+- https://wiki.oni2.net/OBD:SNDD
