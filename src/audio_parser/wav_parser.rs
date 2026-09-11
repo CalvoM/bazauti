@@ -411,7 +411,7 @@ impl WAVParser {
         let data = &self.raw_metadata.data_metadata;
         let coefficients = fmt_metadata.coefficients.as_ref().unwrap();
         let block_align = fmt_metadata.block_align;
-        let raw_data = AudioData::I16(Vec::new());
+        let mut raw_data = AudioData::I16(Vec::new());
         let mut starting_idx = 0;
         let is_stereo = if fmt_metadata.number_of_channels == 2 {
             true
@@ -497,20 +497,59 @@ impl WAVParser {
             )
             .unwrap();
             if is_stereo {
+                let coefficient_offset_ch1 = (decode_ctx.channels[1].predictor * 4) as usize;
                 decode_ctx.channels[1].coeff1 = convert_to_number::<i16>(
                     coefficients,
-                    coefficient_offset,
-                    (coefficient_offset) + 2,
+                    coefficient_offset_ch1,
+                    (coefficient_offset_ch1) + 2,
                 )
                 .unwrap();
                 decode_ctx.channels[1].coeff2 = convert_to_number::<i16>(
                     coefficients,
-                    coefficient_offset + 2,
-                    (coefficient_offset) + 4,
+                    coefficient_offset_ch1 + 2,
+                    (coefficient_offset_ch1) + 4,
                 )
                 .unwrap();
             }
-            break;
+            if let AudioData::I16(ref mut samples) = raw_data {
+                samples.push(decode_ctx.channels[0].sample2);
+                if is_stereo {
+                    samples.push(decode_ctx.channels[1].sample2);
+                }
+                samples.push(decode_ctx.channels[0].sample1);
+                if is_stereo {
+                    samples.push(decode_ctx.channels[1].sample1);
+                }
+            }
+            while inner_block_idx < (block_align as usize) {
+                for step in (0..=1).rev() {
+                    let ctx_idx: usize = if is_stereo && step == 0 { 1 } else { 0 };
+                    let predicted_sample: i32 = ((decode_ctx.channels[ctx_idx].sample1 as i32
+                        * decode_ctx.channels[ctx_idx].coeff1 as i32)
+                        + (decode_ctx.channels[ctx_idx].sample2 as i32
+                            * decode_ctx.channels[ctx_idx].coeff2 as i32))
+                        / ADPCM_FIXED_COEF_BASE;
+                    let nibble = (*data.get(starting_idx + inner_block_idx).unwrap()
+                        >> 4 * (step as usize))
+                        & 0x0f;
+                    let nibble_error_delta: i8 = ((nibble ^ 8) as i8) - 8;
+                    let nibble_prediction = (predicted_sample
+                        + (decode_ctx.channels[ctx_idx].delta as i32 * nibble_error_delta as i32))
+                        .clamp(i16::MIN as i32, i16::MAX as i32);
+                    if let AudioData::I16(ref mut samples) = raw_data {
+                        samples.push(nibble_prediction as i16);
+                    }
+                    decode_ctx.channels[ctx_idx].delta = ((decode_ctx.channels[ctx_idx].delta
+                        as i32
+                        * ADAPTATION_TABLE[nibble as usize])
+                        / ADPCM_FIXED_ADAPTATION_BASE)
+                        .max(16) as i16;
+                    decode_ctx.channels[ctx_idx].sample2 = decode_ctx.channels[ctx_idx].sample1;
+                    decode_ctx.channels[ctx_idx].sample1 = nibble_prediction as i16;
+                }
+                inner_block_idx += 1;
+            }
+            starting_idx += inner_block_idx;
         }
         dbg!(decode_ctx);
         raw_data
@@ -551,86 +590,7 @@ impl WAVParser {
         }
         self.raw_data = Some(raw_data);
     }
-    fn parse_audio_adpcm_mono(&self) -> AudioData {
-        let fmt_metadata = &self.raw_metadata.fmt_metadata;
-        let data = &self.raw_metadata.data_metadata;
-        let coefficients = fmt_metadata.coefficients.as_ref().unwrap();
-        let block_align = fmt_metadata.block_align;
-        let mut starting_idx = 0;
-        let mut raw_data = AudioData::I16(Vec::new());
-        while (starting_idx + block_align as usize) <= data.len() {
-            let mut inner_block_idx = 0;
-            let predictor = data.get(starting_idx + inner_block_idx).unwrap();
-            inner_block_idx += 1;
-            let coefficient_offset = (*predictor * 4) as usize;
-            let mut delta = convert_to_number::<i16>(
-                &data,
-                starting_idx + inner_block_idx,
-                starting_idx + inner_block_idx + 2,
-            )
-            .unwrap();
-            inner_block_idx += 2;
-            let mut sample1 = convert_to_number::<i16>(
-                &data,
-                starting_idx + inner_block_idx,
-                starting_idx + inner_block_idx + 2,
-            )
-            .unwrap();
-            inner_block_idx += 2;
-            let mut sample2 = convert_to_number::<i16>(
-                &data,
-                starting_idx + inner_block_idx,
-                starting_idx + inner_block_idx + 2,
-            )
-            .unwrap();
-            inner_block_idx += 2;
-            let coeff1 = convert_to_number::<i16>(
-                coefficients,
-                coefficient_offset,
-                (coefficient_offset) + 2,
-            )
-            .unwrap();
-            let coeff2 = convert_to_number::<i16>(
-                coefficients,
-                (coefficient_offset) + 2,
-                (coefficient_offset) + 4,
-            )
-            .unwrap();
-            if let AudioData::I16(ref mut samples) = raw_data {
-                samples.extend_from_slice(&[sample2, sample1]);
-            }
-            while inner_block_idx < (block_align as usize) {
-                for step in (0..=1).rev() {
-                    let predicted_sample: i32 = ((sample1 as i32 * coeff1 as i32)
-                        + (sample2 as i32 * coeff2 as i32))
-                        / ADPCM_FIXED_COEF_BASE;
-                    let nibble = (*data.get(starting_idx + inner_block_idx).unwrap()
-                        >> 4 * (step as usize))
-                        & 0x0f;
-                    let nibble_error_delta: i8 = ((nibble ^ 8) as i8) - 8;
-                    let nibble_prediction = (predicted_sample
-                        + (delta as i32 * nibble_error_delta as i32))
-                        .clamp(i16::MIN as i32, i16::MAX as i32);
-                    if let AudioData::I16(ref mut samples) = raw_data {
-                        samples.push(nibble_prediction as i16);
-                    }
-                    // We use `nibble` here because the nibble_error_delta is signed, thus can have
-                    // negative numbers.
-                    delta = ((delta as i32 * ADAPTATION_TABLE[nibble as usize])
-                        / ADPCM_FIXED_ADAPTATION_BASE)
-                        .max(16) as i16;
-                    sample2 = sample1;
-                    sample1 = nibble_prediction as i16;
-                }
-                inner_block_idx += 1;
-            }
-            starting_idx += inner_block_idx;
-        }
-        raw_data
-    }
     fn parse_audio_adpcm_data(&mut self) {
-        let fmt_metadata = &self.raw_metadata.fmt_metadata;
-        let channels = fmt_metadata.number_of_channels;
         self.raw_data = Some(self.parse_audio_adpcm_unified());
     }
     pub fn render(&mut self) {
