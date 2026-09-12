@@ -1,1 +1,3 @@
-pub mod audio_parser;
+pub mod parser;
+pub mod playback;
+pub mod waveform;

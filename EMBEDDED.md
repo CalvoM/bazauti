@@ -60,7 +60,7 @@ Do not use `unwrap`, `expect`, direct unchecked slices, or `unreachable!()` on f
 
 Use checked slices and checked arithmetic while traversing chunks, and enforce documented limits for channel count, metadata length, chunk count, and block size.
 
-Confirmed panic sites in the current parser (`src/audio_parser/wav_parser.rs`), not exhaustive:
+Confirmed panic sites in the current parser (`src/parser/wav.rs`), not exhaustive:
 
 - Line 148: `(file_size - 1).try_into().unwrap()` underflows if `file_size == 0`.
 - Lines 126-178: every chunk header/slice (`file_data[start_idx..start_idx + 4]`, etc.) trusts the file's own declared sizes with no check against the actual buffer length — a truncated file panics instead of erroring.
@@ -94,7 +94,7 @@ Host-only wrappers can add detailed diagnostics where useful.
 
 ## Remove parser side effects
 
-The parser currently writes `./data.bytes` (`wav_parser.rs:169`, inside the `data` chunk branch of `parse()`), and ADPCM decoding calls `dbg!(decode_ctx)` (`wav_parser.rs:554`, end of `parse_audio_adpcm_unified`). Library code should not write files or emit debug output. Let callers select their logging and persistence behavior.
+The parser currently writes `./data.bytes` (`wav.rs:169`, inside the `data` chunk branch of `parse()`), and ADPCM decoding calls `dbg!(decode_ctx)` (`wav_parser.rs:554`, end of `parse_audio_adpcm_unified`). Library code should not write files or emit debug output. Let callers select their logging and persistence behavior.
 
 ## Define the supported codec subset
 

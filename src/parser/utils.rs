@@ -1,4 +1,4 @@
-use crate::audio_parser::errors::AudioParserError;
+use crate::parser::errors::AudioParserError;
 
 pub fn fixed_string(data: &[u8]) -> String {
     let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
