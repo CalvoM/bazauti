@@ -3,16 +3,5 @@ name = "bazauti"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = ["playback"]
-waveform = ["dep:plotters"]
-playback = ["dep:cpal"]
-
-[[bin]]
-name = "bazaplay"
-path = "src/bin/bazaplay.rs"
-
 [dependencies]
-cpal = {version = "0.18.2", optional=true}
-plotters = {version = "0.3.7", optional = true}
 thiserror = "2.0.20"
