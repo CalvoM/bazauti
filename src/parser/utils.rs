@@ -79,7 +79,7 @@ pub enum CompressionCode {
     #[default]
     Unknown = 0,
     Pcm = 1,
-    Adpcm = 2,
+    MSAdpcm = 2,
     IeeeFloat = 3,
     G711Alaw = 6,
     G711Ulaw = 7,
@@ -98,7 +98,7 @@ impl std::fmt::Display for CompressionCode {
         let value = match self {
             Self::Unknown => "Unknown",
             Self::Pcm => "Microsoft PCM (Uncompressed)",
-            Self::Adpcm => "Microsoft ADPCM",
+            Self::MSAdpcm => "Microsoft ADPCM",
             Self::IeeeFloat => "Microsoft IEEE Float",
             Self::G711Alaw => "ITU G.711 a-law",
             Self::G711Ulaw => "ITU G.711 u-law",
@@ -120,7 +120,7 @@ impl From<u16> for CompressionCode {
     fn from(code: u16) -> Self {
         match code {
             1 => Self::Pcm,
-            2 => Self::Adpcm,
+            2 => Self::MSAdpcm,
             3 => Self::IeeeFloat,
             6 => Self::G711Alaw,
             7 => Self::G711Ulaw,
