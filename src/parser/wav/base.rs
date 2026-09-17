@@ -135,17 +135,17 @@ impl WAVParser {
         }
     }
 
-    pub fn metadata(self) -> WAVMetadata {
-        self.raw_metadata
+    pub fn metadata(&self) -> WAVMetadata {
+        self.raw_metadata.clone()
     }
 
     pub fn samples(self) -> Vec<u8> {
         self.raw_metadata.data_metadata
     }
 
-    pub fn context(self) -> WaveParserContext {
+    pub fn context(&self) -> WaveParserContext {
         WaveParserContext {
-            samples: self.raw_data,
+            samples: self.raw_data.clone(),
             sample_rate: self.raw_metadata.fmt_metadata.sample_rate_per_second,
             channels: self.raw_metadata.fmt_metadata.number_of_channels,
             compression_code: self.raw_metadata.fmt_metadata.compression_code,
