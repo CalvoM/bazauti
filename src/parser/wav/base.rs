@@ -1,6 +1,4 @@
-#![allow(warnings)]
 use crate::parser::{
-    errors::RenderingError,
     utils::{convert_to_number, fixed_string, CompressionCode, ListInfoId},
     wav::{ima_adpcm::ImaAdpcmCodec, ms_adpcm::MSAdpcmCodec, pcm::PCMCodec},
 };
@@ -105,11 +103,11 @@ pub trait WAVCodec: Debug {
         let avg_bytes_per_second = convert_to_number::<u32>(data, 8, 12).unwrap();
         let block_align = convert_to_number::<u16>(data, 12, 14).unwrap();
         let bits_per_sample = convert_to_number::<u16>(data, 14, 16).unwrap();
-        let mut extra_bytes_size: Option<u16> = None;
-        let mut extra_bytes: Option<Vec<u8>> = None;
-        let mut samples_per_block: Option<u16> = None;
-        let mut coefficient_count: Option<u16> = None;
-        let mut coefficients: Option<Vec<u8>> = None;
+        let extra_bytes_size: Option<u16> = None;
+        let extra_bytes: Option<Vec<u8>> = None;
+        let samples_per_block: Option<u16> = None;
+        let coefficient_count: Option<u16> = None;
+        let coefficients: Option<Vec<u8>> = None;
         let metadata = FmtMetadata {
             compression_code: self.compression_code(),
             number_of_channels,
