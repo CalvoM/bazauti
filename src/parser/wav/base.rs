@@ -85,7 +85,7 @@ pub struct WaveParserContext {
 
 pub trait WAVCodec: Debug {
     fn compression_code(&self) -> CompressionCode;
-    fn parse_audio_data(
+    fn decode_data(
         &self,
         data: &[u8],
         metadata: &FmtMetadata,
@@ -300,7 +300,7 @@ impl WAVParser {
         let Some(codec) = &self.codec else {
             return;
         };
-        if let Ok(audio_data) = codec.parse_audio_data(
+        if let Ok(audio_data) = codec.decode_data(
             &self.raw_metadata.data_metadata,
             &self.raw_metadata.fmt_metadata,
         ) {

@@ -24,11 +24,18 @@ impl WAVCodec for ImaAdpcmCodec {
     fn compression_code(&self) -> CompressionCode {
         CompressionCode::ImaAdpcm
     }
-    fn parse_audio_data(
+    fn decode_data(
         &self,
-        _data: &[u8],
+        data: &[u8],
         _metadata: &super::base::FmtMetadata,
     ) -> Result<super::base::AudioData, crate::parser::errors::AudioParserError> {
+        //obtain header details
+        let sample0 = convert_to_number::<i16>(data, 0, 2).unwrap();
+        let step_table_index = *data.get(2).unwrap();
+        let reserved = *data.get(3).unwrap();
+        dbg!(sample0);
+        dbg!(step_table_index);
+        dbg!(reserved);
         Ok(super::base::AudioData::U8(vec![]))
     }
     fn parse_fmt_metadata(

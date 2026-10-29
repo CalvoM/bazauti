@@ -9,7 +9,7 @@ impl WAVCodec for PCMCodec {
     fn compression_code(&self) -> CompressionCode {
         CompressionCode::Pcm
     }
-    fn parse_audio_data(
+    fn decode_data(
         &self,
         data: &[u8],
         fmt_metadata: &super::base::FmtMetadata,
